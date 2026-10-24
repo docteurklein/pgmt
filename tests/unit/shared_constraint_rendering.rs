@@ -191,7 +191,7 @@ fn test_shared_constraint_rendering_exclusion_consistency() -> Result<()> {
         "EXCLUDE USING gist",
         "room_id WITH =",
         "tsrange(start_time, end_time) WITH &&",
-        "WHERE status = 'active'",
+        "WHERE (status = 'active')",
     ];
 
     for feature in expected_features {

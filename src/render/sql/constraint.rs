@@ -110,7 +110,7 @@ pub fn render_create_constraint(constraint: &Constraint) -> String {
             exclusion_def.push(')');
 
             if let Some(pred) = predicate {
-                exclusion_def.push_str(&format!(" WHERE {}", pred));
+                exclusion_def.push_str(&format!(" WHERE ({})", pred));
             }
 
             exclusion_def
@@ -324,7 +324,7 @@ mod tests {
         let sql = render_create_constraint(&constraint);
         assert_eq!(
             sql,
-            "ALTER TABLE \"public\".\"bookings\" ADD CONSTRAINT \"active_bookings_excl\" EXCLUDE USING gist (resource_id WITH =, daterange(start_date, end_date) WITH &&) WHERE status = 'active';"
+            "ALTER TABLE \"public\".\"bookings\" ADD CONSTRAINT \"active_bookings_excl\" EXCLUDE USING gist (resource_id WITH =, daterange(start_date, end_date) WITH &&) WHERE (status = 'active');"
         );
     }
 
