@@ -137,7 +137,7 @@ pub async fn cmd_apply_watch_impl(
                                 println!("🛑 Operation interrupted, shutting down...");
                                 break;
                             }
-                            error!("❌ Failed to apply schema: {}", e);
+                            println!("❌ Failed to apply schema: {:#}", e);
                             println!("⚠️  Will retry on next file change");
                         }
                     }
