@@ -1694,4 +1694,58 @@ COMMENT ON COLUMN users.email IS 'Email address for login';"#,
         })
         .await
     }
+
+    /// A SQL function body is checked when the function is created, but
+    /// `pg_depend` records nothing about what the body uses. The `-- require:`
+    /// that lets the schema files load in order is also the edge that puts the
+    /// function after the commit of the enum value its body uses.
+    #[tokio::test]
+    async fn test_required_function_body_using_a_new_enum_value_applies() -> Result<()> {
+        with_cli_helper(async |helper| {
+            helper.init_project()?;
+
+            let functions = |value: &str| {
+                format!(
+                    "-- require: types.sql\n\
+                     CREATE FUNCTION mood_label() RETURNS text LANGUAGE sql \
+                     AS $$ SELECT '{value}'::mood::text $$;"
+                )
+            };
+            helper.write_schema_file("types.sql", "CREATE TYPE mood AS ENUM ('ok', 'sad');")?;
+            helper.write_schema_file("functions.sql", &functions("ok"))?;
+            helper
+                .command()
+                .args(["migrate", "new", "initial"])
+                .assert()
+                .success();
+
+            crate::helpers::cli::next_version_tick();
+            helper.write_schema_file(
+                "types.sql",
+                "CREATE TYPE mood AS ENUM ('ok', 'sad', 'happy');",
+            )?;
+            helper.write_schema_file("functions.sql", &functions("happy"))?;
+            helper
+                .command()
+                .args(["migrate", "new", "add_happy"])
+                .assert()
+                .success();
+
+            helper
+                .command()
+                .args(["migrate", "apply", "--target-url", &helper.dev_database_url])
+                .assert()
+                .success();
+
+            let pool = helper.connect_to_dev_db().await?;
+            let label: String = sqlx::query_scalar("SELECT mood_label()")
+                .fetch_one(&pool)
+                .await?;
+            pool.close().await;
+            assert_eq!(label, "happy");
+
+            Ok(())
+        })
+        .await
+    }
 }

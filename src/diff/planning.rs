@@ -357,9 +357,6 @@ pub struct PlannedStep {
     pub module: Option<String>,
     /// What the step needs from the transaction it runs in.
     pub tx: TxRequirement,
-    /// The step can use objects its `deps` do not name (see
-    /// [`MigrationStep::has_untracked_dependencies`]).
-    pub untracked_deps: bool,
     /// Indices of steps that must run before this one, in the same vec as
     /// this step (re-pointed at the new positions once the vec is ordered).
     pub deps: Vec<usize>,
@@ -372,8 +369,7 @@ pub struct PlannedStep {
 /// - it belongs to a different module than the open section,
 /// - it or the open section's step is `NonTransactional` (nothing can share
 ///   its section, so it forces one even as the first step), or
-/// - it depends on a `CommitBeforeDependents` step in the open section, or
-///   has untracked dependencies while the open section holds one.
+/// - it depends on a `CommitBeforeDependents` step in the open section.
 ///
 /// The traversal consults it to avoid forcing a boundary, and
 /// `modules::sectioning` cuts wherever it reports one, so the order and the
@@ -398,7 +394,6 @@ impl SectionBoundaries {
                     || step.tx == TxRequirement::NonTransactional
                     || *module != step.module
                     || step.deps.iter().any(|d| self.uncommitted.contains(d))
-                    || (step.untracked_deps && !self.uncommitted.is_empty())
             }
         }
     }
@@ -498,7 +493,6 @@ pub fn annotate(
             let module = module_of(&step)?;
             Ok(PlannedStep {
                 tx: step.tx_requirement(),
-                untracked_deps: step.has_untracked_dependencies(),
                 step,
                 module,
                 deps: deps[i].iter().copied().collect(),
@@ -604,7 +598,6 @@ mod tests {
             step: schema_step(name),
             module: module.map(str::to_string),
             tx: TxRequirement::Transactional,
-            untracked_deps: false,
             deps: deps.to_vec(),
         }
     }

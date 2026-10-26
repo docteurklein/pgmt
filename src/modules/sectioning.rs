@@ -807,7 +807,6 @@ mod tests {
             }),
             module: None,
             tx,
-            untracked_deps: false,
             deps: deps.to_vec(),
         };
         let sections = cut_sections(vec![

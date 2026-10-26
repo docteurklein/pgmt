@@ -1053,9 +1053,6 @@ async fn test_uses_of_a_new_enum_value_run_after_it_commits() -> Result<()> {
             format!(
                 "CREATE FUNCTION default_mood() RETURNS mood LANGUAGE sql AS $$ SELECT '{value}'::mood $$"
             ),
-            format!(
-                "CREATE FUNCTION default_mood_label() RETURNS text LANGUAGE sql AS $$ SELECT '{value}'::mood::text $$"
-            ),
         ]
     };
     let initial = schema("ok");

@@ -145,19 +145,6 @@ impl MigrationStep {
         requirement
     }
 
-    /// Returns true if this step's SQL can reference objects that no
-    /// dependency edge records: a function body other than `BEGIN ATOMIC` is
-    /// opaque to `pg_depend`, yet a SQL-language body is parsed on create.
-    /// Placement assumes such a step uses whatever the plan has not committed.
-    pub fn has_untracked_dependencies(&self) -> bool {
-        matches!(
-            self,
-            MigrationStep::Function(
-                FunctionOperation::Create { .. } | FunctionOperation::Replace { .. }
-            )
-        )
-    }
-
     /// Returns true if this step is a "relationship" step: one whose id it
     /// shares with an object it does not PROVIDE (an FK create, an `ALTER
     /// SEQUENCE … OWNED BY`). Ordering (`planning::collect_edges`) never treats
