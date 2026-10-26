@@ -87,6 +87,12 @@ pub fn diff(old: Option<&Column>, new: Option<&Column>) -> Vec<ColumnAction> {
                         default: d.clone(),
                     });
                 }
+                (Some(old_default), Some(d)) if old_default != d => {
+                    changes.push(ColumnAction::SetDefault {
+                        name: n.name.clone(),
+                        default: d.clone(),
+                    });
+                }
                 _ => {}
             }
 

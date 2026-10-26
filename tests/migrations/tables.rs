@@ -173,6 +173,44 @@ async fn test_add_column_migration() -> Result<()> {
     Ok(())
 }
 
+/// A column whose default changes from one value to another gets a SET
+/// DEFAULT, or every target would keep the old default.
+#[tokio::test]
+async fn test_change_column_default_migration() -> Result<()> {
+    let helper = MigrationTestHelper::new().await;
+
+    helper
+        .run_migration_test(
+            &["CREATE SCHEMA test_schema"],
+            &["CREATE TABLE test_schema.users (status TEXT DEFAULT 'new')"],
+            &["CREATE TABLE test_schema.users (status TEXT DEFAULT 'active')"],
+            |steps, final_catalog| {
+                let actions: Vec<&ColumnAction> = steps
+                    .iter()
+                    .flat_map(|s| match s {
+                        MigrationStep::Table(TableOperation::Alter { actions, .. }) => {
+                            actions.iter().collect()
+                        }
+                        _ => Vec::new(),
+                    })
+                    .collect();
+                assert!(
+                    matches!(actions.as_slice(), [ColumnAction::SetDefault { name, default }]
+                        if name == "status" && default == "'active'::text"),
+                    "expected one SET DEFAULT, got {actions:?}"
+                );
+
+                let column = &final_catalog.tables[0].columns[0];
+                assert_eq!(column.default.as_deref(), Some("'active'::text"));
+
+                Ok(())
+            },
+        )
+        .await?;
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_table_with_dependent_view_migration() -> Result<()> {
     let helper = MigrationTestHelper::new().await;
