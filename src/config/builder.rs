@@ -220,9 +220,6 @@ impl ConfigBuilder {
             validate_file_dependencies: schema_input
                 .and_then(|s| s.validate_file_dependencies)
                 .unwrap_or(defaults.validate_file_dependencies),
-            verbose_file_processing: schema_input
-                .and_then(|s| s.verbose_file_processing)
-                .unwrap_or(defaults.verbose_file_processing),
         }
     }
 

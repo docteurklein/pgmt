@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A migration that adds an enum value and uses it now applies. Postgres refuses to use a new enum value before the transaction that added it commits (`unsafe use of new value`), and `pgmt migrate new` put the `ALTER TYPE ... ADD VALUE` and everything using the value — a column default, a CHECK constraint, a partial index, a view — in the same transaction. It now commits in between, writing the migration as `-- pgmt:section` blocks when it has to.
 - Changing a column's default from one value to another now generates `ALTER COLUMN ... SET DEFAULT`. pgmt only noticed a default being added or removed, so `pgmt apply` and new migrations left a changed default at its old value.
 - Enum labels containing a single quote are now escaped in generated `CREATE TYPE` and `ALTER TYPE ... ADD VALUE` statements, which failed with a syntax error before.
+- The `schema.verbose_file_processing` setting is removed. It was documented as printing per-file progress while loading schema files, but it never did anything; `--verbose` already reports that progress. A `pgmt.yaml` that still sets it loads as before.
 
 ## 0.6.5 - 2026-09-22
 

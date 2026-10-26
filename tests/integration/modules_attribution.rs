@@ -63,7 +63,6 @@ async fn process(
     let processor = SchemaProcessor::new(
         db.pool().clone(),
         SchemaProcessorConfig {
-            verbose: false,
             clean_before_apply: false,
             objects: config.objects.clone(),
         },

@@ -267,7 +267,6 @@ async fn test_each_file_owns_the_objects_it_creates() -> anyhow::Result<()> {
         let processor = SchemaProcessor::new(
             db.pool().clone(),
             SchemaProcessorConfig {
-                verbose: false,
                 clean_before_apply: false,
                 objects: Default::default(),
             },

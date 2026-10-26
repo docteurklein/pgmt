@@ -23,8 +23,6 @@ use std::collections::BTreeMap;
 /// Configuration for schema processing behavior
 #[derive(Debug, Clone)]
 pub struct SchemaProcessorConfig {
-    /// Whether to show verbose output during processing
-    pub verbose: bool,
     /// Whether to clean the database before applying schema
     pub clean_before_apply: bool,
     /// Object filter config (controls which schemas the cleaner drops)
@@ -34,7 +32,6 @@ pub struct SchemaProcessorConfig {
 impl Default for SchemaProcessorConfig {
     fn default() -> Self {
         Self {
-            verbose: false,
             clean_before_apply: true,
             objects: Objects::default(),
         }
@@ -105,7 +102,7 @@ impl SchemaProcessor {
         );
 
         // Step 3: Create executor for applying files
-        let executor = SchemaFileExecutor::new(self.pool.clone(), self.config.verbose);
+        let executor = SchemaFileExecutor::new(self.pool.clone());
 
         // Step 4: Apply the files, recording an OID boundary after each.
         //

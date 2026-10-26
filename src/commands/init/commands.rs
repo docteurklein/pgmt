@@ -909,7 +909,6 @@ async fn validate_schema_files_impl(
     // Process schema directory (loads, orders, and applies all files)
     // Note: clean_before_apply is false since we already cleaned above
     let config = SchemaProcessorConfig {
-        verbose: false,            // Silent validation
         clean_before_apply: false, // Already cleaned above
         ..Default::default()
     };

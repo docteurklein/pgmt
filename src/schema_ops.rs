@@ -247,7 +247,6 @@ async fn apply_schema_files_to_shadow(
     let schema_dir = root_dir.join(&config.directories.schema);
 
     let processor_config = SchemaProcessorConfig {
-        verbose: config.schema.verbose_file_processing,
         clean_before_apply: false, // Already cleaned by clean_shadow_for_schema
         objects: config.objects.clone(),
     };

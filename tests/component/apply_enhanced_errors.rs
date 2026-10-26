@@ -23,7 +23,6 @@ CREATE TABLE users (
         // Test the schema processor directly (this is what apply command uses)
         use pgmt::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
         let processor_config = SchemaProcessorConfig {
-            verbose: true,
             clean_before_apply: false, // DB is already clean
             ..Default::default()
         };
@@ -81,7 +80,6 @@ async fn test_schema_executor_succeeds_with_valid_schema() -> Result<()> {
         // Test the schema processor
         use pgmt::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
         let processor_config = SchemaProcessorConfig {
-            verbose: true,
             clean_before_apply: false,
             ..Default::default()
         };
@@ -125,7 +123,6 @@ CREATE VIEW user_emails AS SELECT id, email FROM users;"#,
         // Test the schema processor
         use pgmt::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
         let processor_config = SchemaProcessorConfig {
-            verbose: true,
             clean_before_apply: false,
             ..Default::default()
         };

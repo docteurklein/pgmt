@@ -444,14 +444,10 @@ pub struct SchemaFileExecutor {
 }
 
 impl SchemaFileExecutor {
-    pub fn new(pool: PgPool, verbose: bool) -> Self {
+    pub fn new(pool: PgPool) -> Self {
         let config = SqlExecutorConfig {
             error_level: ErrorLevel::WithTips,
-            progress_style: if verbose {
-                ProgressStyle::FileCount
-            } else {
-                ProgressStyle::None
-            },
+            progress_style: ProgressStyle::None,
             content_truncation: 400,
             source_context: SourceContextStyle::File,
             safety_indicators: false,

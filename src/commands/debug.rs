@@ -275,7 +275,6 @@ pub async fn cmd_debug_dependencies(
     let processor = SchemaProcessor::new(
         shadow_pool,
         SchemaProcessorConfig {
-            verbose: false,
             clean_before_apply: false,
             objects: config.objects.clone(),
         },

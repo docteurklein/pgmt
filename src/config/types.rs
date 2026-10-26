@@ -407,13 +407,10 @@ pub struct SchemaInput {
     pub augment_dependencies_from_files: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validate_file_dependencies: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verbose_file_processing: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Schema {
     pub augment_dependencies_from_files: bool,
     pub validate_file_dependencies: bool,
-    pub verbose_file_processing: bool,
 }

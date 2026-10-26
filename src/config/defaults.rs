@@ -59,7 +59,6 @@ impl Default for Schema {
         Self {
             augment_dependencies_from_files: true,
             validate_file_dependencies: true,
-            verbose_file_processing: false,
         }
     }
 }

@@ -27,7 +27,6 @@ async fn test_schema_executor_reports_specific_file_on_error() -> Result<()> {
         // Test that the processor provides detailed error information
         use pgmt::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
         let processor_config = SchemaProcessorConfig {
-            verbose: true,
             clean_before_apply: false,
             ..Default::default()
         };
@@ -82,7 +81,6 @@ async fn test_schema_executor_succeeds_with_valid_files() -> Result<()> {
         // Test that the processor succeeds with valid files
         use pgmt::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
         let processor_config = SchemaProcessorConfig {
-            verbose: true,
             clean_before_apply: false,
             ..Default::default()
         };
@@ -143,7 +141,6 @@ CREATE TABLE app.users (
         // Test that the processor respects dependency order
         use pgmt::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
         let processor_config = SchemaProcessorConfig {
-            verbose: true,
             clean_before_apply: false,
             ..Default::default()
         };
