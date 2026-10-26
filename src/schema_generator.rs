@@ -553,7 +553,7 @@ impl SchemaGenerator {
         match op {
             TypeOperation::Create { schema, name, .. } => (schema.clone(), name.clone()),
             TypeOperation::Drop { schema, name } => (schema.clone(), name.clone()),
-            TypeOperation::Alter { schema, name, .. } => (schema.clone(), name.clone()),
+            TypeOperation::AddValue { schema, name, .. } => (schema.clone(), name.clone()),
         }
     }
 

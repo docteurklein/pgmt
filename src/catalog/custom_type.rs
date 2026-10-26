@@ -157,6 +157,18 @@ mod tests {
     }
 
     #[test]
+    fn test_create_enum_type_escapes_labels() {
+        let new_type = make_enum_type("public", "verdict", vec!["won't fix", "fixed"]);
+
+        match &diff(None, Some(&new_type))[..] {
+            [MigrationStep::Type(TypeOperation::Create { definition, .. })] => {
+                assert_eq!(definition, "('won''t fix', 'fixed')");
+            }
+            other => panic!("Expected one CreateType step, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_drop_enum_type() {
         let old_type = make_enum_type("public", "status", vec!["active", "inactive"]);
 
@@ -181,20 +193,18 @@ mod tests {
 
         assert_eq!(steps.len(), 1);
         match &steps[0] {
-            MigrationStep::Type(TypeOperation::Alter {
+            MigrationStep::Type(TypeOperation::AddValue {
                 schema,
                 name,
-                action,
-                definition,
+                value,
+                after,
             }) => {
                 assert_eq!(schema, "public");
                 assert_eq!(name, "status");
-                assert_eq!(action, "ADD VALUE");
-                // The definition should include the added value and AFTER clause
-                assert!(definition.contains("'pending'"));
-                assert!(definition.contains("AFTER"));
+                assert_eq!(value, "pending");
+                assert_eq!(after.as_deref(), Some("inactive"));
             }
-            _ => panic!("Expected AlterType step"),
+            _ => panic!("Expected AddValue step"),
         }
     }
 
@@ -210,36 +220,34 @@ mod tests {
 
         // Check the first ALTER TYPE statement (adds 'inactive')
         match &steps[0] {
-            MigrationStep::Type(TypeOperation::Alter {
+            MigrationStep::Type(TypeOperation::AddValue {
                 schema,
                 name,
-                action,
-                definition,
+                value,
+                after,
             }) => {
                 assert_eq!(schema, "public");
                 assert_eq!(name, "status");
-                assert_eq!(action, "ADD VALUE");
-                assert!(definition.contains("'inactive'"));
-                assert!(definition.contains("AFTER 'active'"));
+                assert_eq!(value, "inactive");
+                assert_eq!(after.as_deref(), Some("active"));
             }
-            _ => panic!("Expected AlterType step"),
+            _ => panic!("Expected AddValue step"),
         }
 
         // Check the second ALTER TYPE statement (adds 'pending')
         match &steps[1] {
-            MigrationStep::Type(TypeOperation::Alter {
+            MigrationStep::Type(TypeOperation::AddValue {
                 schema,
                 name,
-                action,
-                definition,
+                value,
+                after,
             }) => {
                 assert_eq!(schema, "public");
                 assert_eq!(name, "status");
-                assert_eq!(action, "ADD VALUE");
-                assert!(definition.contains("'pending'"));
-                assert!(definition.contains("AFTER 'inactive'"));
+                assert_eq!(value, "pending");
+                assert_eq!(after.as_deref(), Some("inactive"));
             }
-            _ => panic!("Expected AlterType step"),
+            _ => panic!("Expected AddValue step"),
         }
     }
 

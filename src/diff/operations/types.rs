@@ -14,11 +14,13 @@ pub enum TypeOperation {
         schema: String,
         name: String,
     },
-    Alter {
+    /// `ALTER TYPE ... ADD VALUE`: Postgres adds one label per statement.
+    AddValue {
         schema: String,
         name: String,
-        action: String,
-        definition: String,
+        value: String,
+        /// The label the new one follows; `None` appends it.
+        after: Option<String>,
     },
 }
 
@@ -27,7 +29,7 @@ impl TypeOperation {
         match self {
             Self::Create { .. } => OperationKind::Create,
             Self::Drop { .. } => OperationKind::Drop,
-            Self::Alter { .. } => OperationKind::Alter,
+            Self::AddValue { .. } => OperationKind::Alter,
         }
     }
 }

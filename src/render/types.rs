@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::TypeOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, escape_string, quote_ident};
 
 impl SqlRenderer for TypeOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -46,18 +46,21 @@ impl SqlRenderer for TypeOperation {
                 sql: format!("DROP TYPE {}.{};", quote_ident(schema), quote_ident(name)),
                 safety: Safety::Safe,
             }],
-            TypeOperation::Alter {
+            TypeOperation::AddValue {
                 schema,
                 name,
-                action,
-                definition,
+                value,
+                after,
             } => vec![RenderedSql {
                 sql: format!(
-                    "ALTER TYPE {}.{} {} {};",
+                    "ALTER TYPE {}.{} ADD VALUE {}{};",
                     quote_ident(schema),
                     quote_ident(name),
-                    action,
-                    definition
+                    escape_string(value),
+                    after
+                        .as_ref()
+                        .map(|after| format!(" AFTER {}", escape_string(after)))
+                        .unwrap_or_default()
                 ),
                 safety: Safety::Safe,
             }],
@@ -68,7 +71,7 @@ impl SqlRenderer for TypeOperation {
         match self {
             TypeOperation::Create { schema, name, .. }
             | TypeOperation::Drop { schema, name }
-            | TypeOperation::Alter { schema, name, .. } => DbObjectId::Type {
+            | TypeOperation::AddValue { schema, name, .. } => DbObjectId::Type {
                 schema: schema.clone(),
                 name: name.clone(),
             },
@@ -140,12 +143,12 @@ mod tests {
     }
 
     #[test]
-    fn test_render_alter_type_add_value() {
-        let op = TypeOperation::Alter {
+    fn test_render_add_value() {
+        let op = TypeOperation::AddValue {
             schema: "public".to_string(),
             name: "status".to_string(),
-            action: "ADD VALUE".to_string(),
-            definition: "'archived'".to_string(),
+            value: "archived".to_string(),
+            after: None,
         };
         let rendered = op.to_sql();
         assert_eq!(
@@ -156,17 +159,17 @@ mod tests {
     }
 
     #[test]
-    fn test_render_alter_type_add_value_before() {
-        let op = TypeOperation::Alter {
+    fn test_render_add_value_after_escapes_labels() {
+        let op = TypeOperation::AddValue {
             schema: "public".to_string(),
             name: "status".to_string(),
-            action: "ADD VALUE".to_string(),
-            definition: "'draft' BEFORE 'pending'".to_string(),
+            value: "won't fix".to_string(),
+            after: Some("can't repro".to_string()),
         };
         let rendered = op.to_sql();
         assert_eq!(
             rendered[0].sql,
-            "ALTER TYPE \"public\".\"status\" ADD VALUE 'draft' BEFORE 'pending';"
+            "ALTER TYPE \"public\".\"status\" ADD VALUE 'won''t fix' AFTER 'can''t repro';"
         );
     }
 
@@ -182,11 +185,11 @@ mod tests {
             schema: "s".to_string(),
             name: "t".to_string(),
         };
-        let alter = TypeOperation::Alter {
+        let alter = TypeOperation::AddValue {
             schema: "s".to_string(),
             name: "t".to_string(),
-            action: "ADD VALUE".to_string(),
-            definition: "'b'".to_string(),
+            value: "b".to_string(),
+            after: None,
         };
 
         // Types can be recreated from schema, so DROP TYPE is not destructive

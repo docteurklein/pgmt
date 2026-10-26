@@ -305,25 +305,24 @@ async fn test_table_with_custom_type_migration() -> Result<()> {
                 let alter_type_step = steps
                     .iter()
                     .find(|s| {
-                        matches!(s, MigrationStep::Type(TypeOperation::Alter { schema, name, .. })
+                        matches!(s, MigrationStep::Type(TypeOperation::AddValue { schema, name, .. })
                     if schema == "test_schema" && name == "status_type")
                     })
-                    .expect("Should have AlterType step");
+                    .expect("Should have AddValue step");
 
                 // Verify the ALTER TYPE step details
                 match alter_type_step {
-                    MigrationStep::Type(TypeOperation::Alter {
+                    MigrationStep::Type(TypeOperation::AddValue {
                         schema,
                         name,
-                        action,
-                        definition,
+                        value,
+                        ..
                     }) => {
                         assert_eq!(schema, "test_schema");
                         assert_eq!(name, "status_type");
-                        assert_eq!(action, "ADD VALUE");
-                        assert!(definition.contains("'completed'"));
+                        assert_eq!(value, "completed");
                     }
-                    _ => panic!("Expected AlterType step"),
+                    _ => panic!("Expected AddValue step"),
                 }
 
                 // Verify final state exactly

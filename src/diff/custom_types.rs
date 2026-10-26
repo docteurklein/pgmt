@@ -1,6 +1,7 @@
 use crate::catalog::custom_type::{CustomType, TypeKind};
 use crate::diff::operations::{MigrationStep, TypeOperation};
 use crate::render::collation::collate_clause;
+use crate::render::escape_string;
 
 /// Build the `CREATE TYPE` step for a custom type. Comments (on the type and its
 /// composite attributes) are handled centrally by [`crate::diff::comments`].
@@ -10,7 +11,7 @@ fn create_step(n: &CustomType) -> MigrationStep {
             let values: Vec<String> = n
                 .enum_values
                 .iter()
-                .map(|v| format!("'{}'", v.name))
+                .map(|v| escape_string(&v.name))
                 .collect();
             ("ENUM".to_string(), format!("({})", values.join(", ")))
         }
@@ -89,25 +90,19 @@ pub fn diff(old: Option<&CustomType>, new: Option<&CustomType>) -> Vec<Migration
                         // Add the first new value after the last existing one — the
                         // labels are carried in label order — and each subsequent
                         // value after the previous new one.
-                        let after_clause = match old_values.last() {
-                            Some(last_enum_value) => format!(" AFTER '{}'", last_enum_value),
-                            None => String::new(),
-                        };
-
                         added_values
                             .iter()
                             .enumerate()
                             .map(|(i, value)| {
-                                let after = if i == 0 {
-                                    after_clause.clone()
-                                } else {
-                                    format!(" AFTER '{}'", added_values[i - 1])
+                                let after = match i {
+                                    0 => old_values.last().map(|v| v.to_string()),
+                                    _ => Some(added_values[i - 1].clone()),
                                 };
-                                MigrationStep::Type(TypeOperation::Alter {
+                                MigrationStep::Type(TypeOperation::AddValue {
                                     schema: n.schema.clone(),
                                     name: n.name.clone(),
-                                    action: "ADD VALUE".to_string(),
-                                    definition: format!("'{}'{}", value, after),
+                                    value: value.clone(),
+                                    after,
                                 })
                             })
                             .collect()

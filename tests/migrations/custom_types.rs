@@ -199,34 +199,34 @@ async fn test_add_enum_values_migration() -> Result<()> {
 
             // Check first ADD VALUE step
             match &steps[0] {
-                MigrationStep::Type(TypeOperation::Alter {
+                MigrationStep::Type(TypeOperation::AddValue {
                     schema,
                     name,
-                    action,
-                    definition,
+                    value,
+                    after,
                 }) => {
                     assert_eq!(schema, "public");
                     assert_eq!(name, "priority");
-                    assert_eq!(action, "ADD VALUE");
-                    assert_eq!(definition, "'critical' AFTER 'high'");
+                    assert_eq!(value, "critical");
+                    assert_eq!(after.as_deref(), Some("high"));
                 }
-                _ => panic!("Expected AlterType step for first value"),
+                _ => panic!("Expected AddValue step for first value"),
             }
 
             // Check second ADD VALUE step
             match &steps[1] {
-                MigrationStep::Type(TypeOperation::Alter {
+                MigrationStep::Type(TypeOperation::AddValue {
                     schema,
                     name,
-                    action,
-                    definition,
+                    value,
+                    after,
                 }) => {
                     assert_eq!(schema, "public");
                     assert_eq!(name, "priority");
-                    assert_eq!(action, "ADD VALUE");
-                    assert_eq!(definition, "'urgent' AFTER 'critical'");
+                    assert_eq!(value, "urgent");
+                    assert_eq!(after.as_deref(), Some("critical"));
                 }
-                _ => panic!("Expected AlterType step for second value"),
+                _ => panic!("Expected AddValue step for second value"),
             }
 
             // Apply migration - all steps
