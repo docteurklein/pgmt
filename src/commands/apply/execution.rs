@@ -5,7 +5,9 @@ use tracing::info;
 
 use crate::catalog::Catalog;
 use crate::config::Config;
-use crate::diff::operations::{MigrationStep, SqlRenderer};
+use crate::db::plan_executor::render_sections;
+use crate::diff::operations::MigrationStep;
+use crate::modules::StepSection;
 use crate::render::{RenderedSql, Safety};
 
 use super::ApplyOutcome;
@@ -15,19 +17,24 @@ use super::user_interaction;
 
 /// Execute migration plan based on execution mode
 pub async fn execute_plan(
-    steps: &[MigrationStep],
+    plan: &[StepSection],
     dev_pool: &PgPool,
     mode: ExecutionMode,
     expected_catalog: &Catalog,
     config: &Config,
 ) -> Result<ApplyOutcome> {
-    let rendered: Vec<RenderedSql> = steps.iter().flat_map(|step| step.to_sql()).collect();
+    let steps: Vec<MigrationStep> = plan.iter().flat_map(|s| s.steps.iter().cloned()).collect();
+    let sections = render_sections(plan);
+    let rendered: Vec<RenderedSql> = sections
+        .iter()
+        .flat_map(|s| s.statements.iter().cloned())
+        .collect();
 
-    print_plan_header(steps);
+    print_plan_header(&steps);
     if tracing::enabled!(tracing::Level::DEBUG) {
         print_migration_summary(&rendered);
     } else {
-        print_concise_plan(steps);
+        print_concise_plan(&steps);
     }
     println!();
 
@@ -40,7 +47,7 @@ pub async fn execute_plan(
         ExecutionMode::Force => {
             info!("Applying all migration steps without confirmation...");
             let outcome = execution_helpers::apply_all_rendered_steps(
-                &rendered,
+                &sections,
                 dev_pool,
                 expected_catalog,
                 config,
@@ -52,7 +59,7 @@ pub async fn execute_plan(
 
         ExecutionMode::SafeOnly => {
             let outcome = execution_helpers::apply_safe_rendered_steps(
-                &rendered,
+                &sections,
                 dev_pool,
                 expected_catalog,
                 config,
@@ -81,7 +88,7 @@ pub async fn execute_plan(
                 // All safe, apply them
                 info!("All operations are safe - applying automatically...");
                 let outcome = execution_helpers::apply_all_rendered_steps(
-                    &rendered,
+                    &sections,
                     dev_pool,
                     expected_catalog,
                     config,
@@ -100,7 +107,7 @@ pub async fn execute_plan(
                 // Auto-apply when all operations are safe
                 info!("All operations are safe - applying automatically...");
                 let outcome = execution_helpers::apply_all_rendered_steps(
-                    &rendered,
+                    &sections,
                     dev_pool,
                     expected_catalog,
                     config,
@@ -111,8 +118,8 @@ pub async fn execute_plan(
             } else {
                 // Prompt when any destructive operations are present
                 user_interaction::execute_with_user_control(
-                    &rendered,
-                    steps,
+                    &sections,
+                    &steps,
                     dev_pool,
                     expected_catalog,
                     config,

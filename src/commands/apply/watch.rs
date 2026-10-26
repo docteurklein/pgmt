@@ -8,17 +8,13 @@ use tracing::{error, info};
 
 use crate::catalog::Catalog;
 use crate::config::{Config, ObjectFilter};
-use crate::diff::operations::SqlRenderer;
-use crate::diff::plan;
-use crate::render::{RenderedSql, Safety};
+use crate::modules::sectionize_unmoduled;
 
 use super::ApplyOutcome;
 use super::ExecutionMode;
 use super::execution;
-use super::execution_helpers;
 use super::lock::ApplyLock;
 use super::shutdown::ShutdownSignal;
-use super::user_interaction;
 use crate::constants::{WATCH_DEBOUNCE_DURATION, WATCH_POLL_TIMEOUT};
 
 /// Apply command with file watching support
@@ -191,126 +187,18 @@ async fn perform_single_apply(
     let filter = ObjectFilter::from_config(config);
     let old = Catalog::load_managed(dev_pool, &filter).await?;
 
-    let ordered = plan(&old, &new)?;
+    let sections = sectionize_unmoduled(&old, &new)?;
+    let step_count: usize = sections.iter().map(|s| s.steps.len()).sum();
 
-    if ordered.is_empty() {
+    if step_count == 0 {
         return Ok(ApplyOutcome::NoChanges);
     }
 
     info!(
         "Found {} migration step{}",
-        ordered.len(),
-        if ordered.len() == 1 { "" } else { "s" }
+        step_count,
+        if step_count == 1 { "" } else { "s" }
     );
 
-    // Execute the migration plan
-    execute_plan_watch_aware(&ordered, dev_pool, execution_mode, &new, config).await
-}
-
-/// Execute plan with watch mode optimizations
-async fn execute_plan_watch_aware(
-    steps: &[crate::diff::operations::MigrationStep],
-    dev_pool: &PgPool,
-    mode: ExecutionMode,
-    expected_catalog: &Catalog,
-    config: &Config,
-) -> Result<ApplyOutcome> {
-    let rendered: Vec<RenderedSql> = steps.iter().flat_map(|step| step.to_sql()).collect();
-
-    // Show plan summary
-    execution::print_plan_header(steps);
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        execution::print_migration_summary(&rendered);
-    } else {
-        execution::print_concise_plan(steps);
-    }
-
-    match mode {
-        ExecutionMode::DryRun => {
-            println!("✅ Dry run - no changes applied");
-            Ok(ApplyOutcome::Applied)
-        }
-
-        ExecutionMode::Force => {
-            // Auto-apply everything in watch mode
-            let outcome = execution_helpers::apply_all_rendered_steps(
-                &rendered,
-                dev_pool,
-                expected_catalog,
-                config,
-            )
-            .await?;
-            println!("\n✅ Applied {} changes", steps.len());
-            Ok(outcome)
-        }
-
-        ExecutionMode::SafeOnly => {
-            // Auto-apply safe operations, show destructive ones
-            let outcome = execution_helpers::apply_safe_rendered_steps(
-                &rendered,
-                dev_pool,
-                expected_catalog,
-                config,
-                true,
-            )
-            .await?;
-            let applied = rendered.iter().filter(|s| s.safety == Safety::Safe).count();
-            if applied > 0 {
-                println!("\n✅ Applied {} changes", applied);
-            }
-            Ok(outcome)
-        }
-
-        ExecutionMode::RequireApproval => {
-            let has_destructive = rendered.iter().any(|s| s.safety == Safety::Destructive);
-
-            if has_destructive {
-                println!("\n⚠️  Destructive operations detected:");
-                for step in rendered.iter().filter(|s| s.safety == Safety::Destructive) {
-                    let preview = step.sql.lines().next().unwrap_or("");
-                    println!("   • {}", preview);
-                }
-                println!("\nRun with --force to apply, or resolve the schema changes.");
-                Ok(ApplyOutcome::DestructiveRequired)
-            } else {
-                let outcome = execution_helpers::apply_all_rendered_steps(
-                    &rendered,
-                    dev_pool,
-                    expected_catalog,
-                    config,
-                )
-                .await?;
-                println!("\n✅ Applied {} changes", steps.len());
-                Ok(outcome)
-            }
-        }
-
-        ExecutionMode::Interactive => {
-            // Check if all operations are safe
-            let all_safe = rendered.iter().all(|s| s.safety == Safety::Safe);
-
-            if all_safe {
-                // Auto-apply when all operations are safe
-                let outcome = execution_helpers::apply_all_rendered_steps(
-                    &rendered,
-                    dev_pool,
-                    expected_catalog,
-                    config,
-                )
-                .await?;
-                println!("\n✅ Applied {} changes", steps.len());
-                Ok(outcome)
-            } else {
-                // Prompt when any destructive operations are present
-                user_interaction::execute_with_user_control(
-                    &rendered,
-                    steps,
-                    dev_pool,
-                    expected_catalog,
-                    config,
-                )
-                .await
-            }
-        }
-    }
+    execution::execute_plan(&sections, dev_pool, execution_mode, &new, config).await
 }

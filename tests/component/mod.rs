@@ -4,3 +4,4 @@ pub mod apply_enhanced_errors;
 /// These tests focus on single component behavior rather than full integration workflows
 pub mod docker;
 pub mod enhanced_error_reporting;
+pub mod plan_executor;

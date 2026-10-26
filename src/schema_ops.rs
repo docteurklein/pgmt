@@ -4,8 +4,8 @@ use crate::config::Config;
 use crate::config::filter::ObjectFilter;
 use crate::db::cleaner;
 use crate::db::error_context::SqlErrorContext;
+use crate::db::plan_executor::{execute_sections, render_sections};
 use crate::db::schema_processor::{SchemaProcessor, SchemaProcessorConfig};
-use crate::diff::operations::SqlRenderer;
 use anyhow::{Context, Result};
 use sqlx::PgPool;
 use std::path::Path;
@@ -164,32 +164,10 @@ pub async fn settle(
 
     let base = load(pool).await?;
 
-    for section in crate::modules::sectionize_unmoduled(&base, written)? {
-        let statements: Vec<String> = section
-            .steps
-            .iter()
-            .flat_map(|step| step.to_sql())
-            .map(|rendered| rendered.sql)
-            .collect();
-
-        // One round trip per section, run as `migrate apply` runs a
-        // transactional section. A failed section rolls back whole, so
-        // replaying it one statement at a time names the statement that
-        // broke, which the error from a multi-statement batch does not.
-        let batch = sqlx::raw_sql(sqlx::AssertSqlSafe(statements.join("\n")))
-            .execute(pool)
-            .await;
-        if let Err(batch_error) = batch {
-            for statement in &statements {
-                sqlx::raw_sql(sqlx::AssertSqlSafe(statement.clone()))
-                    .execute(pool)
-                    .await
-                    .with_context(|| format!("{PLAN_FAILED}\n\nFailing statement:\n{statement}"))?;
-            }
-            return Err(batch_error)
-                .with_context(|| format!("{PLAN_FAILED}\n\nFailing section: {}", section.name));
-        }
-    }
+    let sections = render_sections(&crate::modules::sectionize_unmoduled(&base, written)?);
+    execute_sections(pool, &sections, |_| {})
+        .await
+        .context(PLAN_FAILED)?;
 
     let catalog = load(pool).await?;
 

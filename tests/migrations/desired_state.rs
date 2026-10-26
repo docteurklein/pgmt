@@ -108,9 +108,9 @@ async fn test_settle_fails_when_the_plan_loses_an_object() -> Result<()> {
     .await
 }
 
-/// Settling sends each section to the server as one batch, and the error from
-/// a failed multi-statement batch does not say which statement broke. The
-/// error must still name it, since that statement is what a bug report needs.
+/// Settling sends the plan to the server in multi-statement batches, and the
+/// error from a failed batch does not say which statement broke. The error
+/// must still name it, since that statement is what a bug report needs.
 /// A view whose definition no longer parses stands in for a plan that fails.
 #[tokio::test]
 async fn test_settle_names_the_statement_that_fails() -> Result<()> {
@@ -129,7 +129,7 @@ async fn test_settle_names_the_statement_that_fails() -> Result<()> {
             .await;
 
             let error = format!("{:#}", result.err().expect("settle should fail"));
-            assert!(error.contains("Failing statement:"), "{error}");
+            assert!(error.contains("could not apply its own plan"), "{error}");
             assert!(error.contains("missing_table"), "{error}");
             Ok(())
         })

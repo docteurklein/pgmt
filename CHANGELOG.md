@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enum labels containing a single quote are now escaped in generated `CREATE TYPE` and `ALTER TYPE ... ADD VALUE` statements, which failed with a syntax error before.
 - The `schema.verbose_file_processing` setting is removed. It was documented as printing per-file progress while loading schema files, but it never did anything; `--verbose` already reports that progress. A `pgmt.yaml` that still sets it loads as before.
 
+### Performance
+
+- `pgmt apply` sends its changes to the database 500 statements per round trip instead of one at a time, and runs each section of the plan as one transaction. Applying a 1,000-table schema to an empty database spent about 9.5 seconds sending statements and now spends under 3, and the saving is larger against a remote database, where each round trip costs more. A failed `pgmt apply` now rolls back the section it was running instead of leaving every statement before the failure applied, and the error still names the statement that failed.
+
 ## 0.6.5 - 2026-09-22
 
 ### Bug Fixes

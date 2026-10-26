@@ -2,10 +2,11 @@ use anyhow::Result;
 use console::style;
 use dialoguer::{Confirm, Select};
 use sqlx::PgPool;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::catalog::Catalog;
 use crate::config::Config;
+use crate::db::plan_executor::{RenderedSection, retain_statements};
 use crate::diff::operations::MigrationStep;
 use crate::render::{RenderedSql, Safety};
 
@@ -15,12 +16,13 @@ use super::verification::verify_final_state;
 
 /// Execute migration steps with enhanced user control and recovery options
 pub async fn execute_with_user_control(
-    rendered: &[RenderedSql],
+    sections: &[RenderedSection],
     steps: &[MigrationStep],
     dev_pool: &PgPool,
     expected_catalog: &Catalog,
     config: &Config,
 ) -> Result<ApplyOutcome> {
+    let rendered: Vec<&RenderedSql> = sections.iter().flat_map(|s| &s.statements).collect();
     loop {
         // Show current migration overview at debug level
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -68,7 +70,7 @@ pub async fn execute_with_user_control(
                 // Apply all steps
                 info!("Applying all migration steps...");
                 let outcome = execution_helpers::apply_all_rendered_steps(
-                    rendered,
+                    sections,
                     dev_pool,
                     expected_catalog,
                     config,
@@ -81,7 +83,7 @@ pub async fn execute_with_user_control(
                 // Apply only safe steps
                 info!("Applying only safe operations...");
                 let outcome = execution_helpers::apply_safe_rendered_steps(
-                    rendered,
+                    sections,
                     dev_pool,
                     expected_catalog,
                     config,
@@ -96,14 +98,8 @@ pub async fn execute_with_user_control(
             }
             2 => {
                 // Review destructive steps, then auto-apply approved + safe
-                return review_destructive_steps(
-                    rendered,
-                    steps,
-                    dev_pool,
-                    expected_catalog,
-                    config,
-                )
-                .await;
+                return review_destructive_steps(sections, dev_pool, expected_catalog, config)
+                    .await;
             }
             3 => {
                 // Refresh option
@@ -137,12 +133,12 @@ pub async fn execute_with_user_control(
 
 /// Review destructive steps individually, then auto-apply approved + safe steps
 async fn review_destructive_steps(
-    rendered: &[RenderedSql],
-    _steps: &[MigrationStep],
+    sections: &[RenderedSection],
     dev_pool: &PgPool,
     expected_catalog: &Catalog,
     config: &Config,
 ) -> Result<ApplyOutcome> {
+    let rendered: Vec<&RenderedSql> = sections.iter().flat_map(|s| &s.statements).collect();
     // Collect destructive step indices (in rendered list) for review
     let destructive_indices: Vec<usize> = rendered
         .iter()
@@ -198,34 +194,23 @@ async fn review_destructive_steps(
     }
 
     // Now apply: all safe steps + approved destructive steps
-    let to_apply: Vec<&RenderedSql> = rendered
-        .iter()
-        .enumerate()
-        .filter(|(i, s)| s.safety == Safety::Safe || approved_destructive[*i])
-        .map(|(_, s)| s)
-        .collect();
+    let mut approvals = approved_destructive.into_iter();
+    let to_apply = retain_statements(sections, |s| {
+        let approved = approvals.next().unwrap_or(false);
+        s.safety == Safety::Safe || approved
+    });
+    let applied: usize = to_apply.iter().map(|s| s.statements.len()).sum();
 
-    if to_apply.is_empty() {
+    if applied == 0 {
         println!("ℹ️  No steps to apply");
         return Ok(ApplyOutcome::Cancelled);
     }
 
-    let show_progress = tracing::enabled!(tracing::Level::INFO);
-    let executor = crate::db::schema_executor::ApplyStepExecutor::new(
-        dev_pool.clone(),
-        show_progress,
-        true,
-        false,
-    );
-
-    for (i, step) in to_apply.iter().enumerate() {
-        debug!("{}", style(&step.sql).dim());
-        executor.execute_step(&step.sql, step.safety, i + 1).await?;
-    }
+    execution_helpers::run_sections(&to_apply, dev_pool).await?;
 
     verify_final_state(dev_pool, expected_catalog, config).await?;
 
-    println!("\n✅ Applied {} changes", to_apply.len());
+    println!("\n✅ Applied {} changes", applied);
 
     if skipped_any {
         Ok(ApplyOutcome::Skipped)

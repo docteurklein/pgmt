@@ -41,8 +41,8 @@ pub enum ApplyOutcome {
 
 use crate::catalog::Catalog;
 use crate::config::{Config, DevUrl, ObjectFilter, ShadowDatabase};
-use crate::diff::operations::SqlRenderer;
-use crate::diff::plan;
+use crate::db::plan_executor::render_sections;
+use crate::modules::sectionize_unmoduled;
 use crate::schema_ops::apply_current_schema_to_shadow;
 use anyhow::{Context, Result};
 use std::path::Path;
@@ -77,17 +77,18 @@ pub async fn cmd_apply(
         .context("Failed to load catalog from development database")?;
 
     info!("Computing schema differences...");
-    let ordered = plan(&old, &new)?;
+    let sections = sectionize_unmoduled(&old, &new)?;
+    let step_count: usize = sections.iter().map(|s| s.steps.len()).sum();
 
-    if ordered.is_empty() {
+    if step_count == 0 {
         println!("✅ No schema changes detected - database is up to date");
         return Ok(ApplyOutcome::NoChanges);
     }
 
     info!(
         "Found {} migration step{}",
-        ordered.len(),
-        if ordered.len() == 1 { "" } else { "s" }
+        step_count,
+        if step_count == 1 { "" } else { "s" }
     );
 
     let mut final_outcome = ApplyOutcome::Applied;
@@ -98,7 +99,7 @@ pub async fn cmd_apply(
             return Ok(ApplyOutcome::Cancelled);
         }
 
-        match execution::execute_plan(&ordered, &dev_pool, execution_mode.clone(), &new, config)
+        match execution::execute_plan(&sections, &dev_pool, execution_mode.clone(), &new, config)
             .await
         {
             Ok(outcome) => {
@@ -115,7 +116,11 @@ pub async fn cmd_apply(
                 let old_filtered = Catalog::load_managed(&dev_pool, &filter).await?;
 
                 info!("Re-computing schema differences...");
-                let new_ordered = plan(&old_filtered, &new_filtered)?;
+                let new_sections = sectionize_unmoduled(&old_filtered, &new_filtered)?;
+                let new_ordered: Vec<_> = new_sections
+                    .iter()
+                    .flat_map(|s| s.steps.iter().cloned())
+                    .collect();
 
                 if new_ordered.is_empty() {
                     println!(
@@ -131,13 +136,15 @@ pub async fn cmd_apply(
                 );
 
                 if matches!(execution_mode, ExecutionMode::Interactive) {
-                    use crate::render::RenderedSql;
-                    let rendered: Vec<RenderedSql> =
-                        new_ordered.iter().flat_map(|step| step.to_sql()).collect();
+                    let rendered = render_sections(&new_sections);
+                    let statements: Vec<_> = rendered
+                        .iter()
+                        .flat_map(|s| s.statements.iter().cloned())
+                        .collect();
 
                     execution::print_plan_header(&new_ordered);
                     if tracing::enabled!(tracing::Level::DEBUG) {
-                        execution::print_migration_summary(&rendered);
+                        execution::print_migration_summary(&statements);
                     } else {
                         execution::print_concise_plan(&new_ordered);
                     }

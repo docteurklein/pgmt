@@ -1,47 +1,36 @@
 use anyhow::Result;
-use console::style;
 use sqlx::PgPool;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::catalog::Catalog;
 use crate::config::Config;
-use crate::db::schema_executor::ApplyStepExecutor;
-use crate::render::{RenderedSql, Safety};
+use crate::db::plan_executor::{RenderedSection, execute_sections, retain_statements};
+use crate::render::Safety;
 
 use super::ApplyOutcome;
 use super::verification::verify_final_state;
 
 /// Apply all rendered steps (both safe and destructive)
 pub async fn apply_all_rendered_steps(
-    rendered: &[RenderedSql],
+    sections: &[RenderedSection],
     dev_pool: &PgPool,
     expected_catalog: &Catalog,
     config: &Config,
 ) -> Result<ApplyOutcome> {
-    let show_progress = tracing::enabled!(tracing::Level::INFO);
-    let executor = ApplyStepExecutor::new(dev_pool.clone(), show_progress, true, false);
-    let total = rendered.len();
-    info!("Executing {} migration steps...", total);
-
-    for (i, step) in rendered.iter().enumerate() {
-        info!("Applying step {}/{}...", i + 1, total);
-        debug!("{}", style(&step.sql).dim());
-
-        executor.execute_step(&step.sql, step.safety, i + 1).await?;
-    }
-
+    run_sections(sections, dev_pool).await?;
     verify_final_state(dev_pool, expected_catalog, config).await?;
     Ok(ApplyOutcome::Applied)
 }
 
 /// Apply only safe rendered steps, optionally showing destructive ones
 pub async fn apply_safe_rendered_steps(
-    rendered: &[RenderedSql],
+    sections: &[RenderedSection],
     dev_pool: &PgPool,
     expected_catalog: &Catalog,
     config: &Config,
     show_skipped: bool,
 ) -> Result<ApplyOutcome> {
+    let rendered: Vec<_> = sections.iter().flat_map(|s| &s.statements).collect();
     let safe_count = rendered.iter().filter(|s| s.safety == Safety::Safe).count();
     let destructive_count = rendered
         .iter()
@@ -80,19 +69,8 @@ pub async fn apply_safe_rendered_steps(
             if safe_count == 1 { "" } else { "s" }
         );
 
-        let show_progress = tracing::enabled!(tracing::Level::INFO);
-        let executor = ApplyStepExecutor::new(dev_pool.clone(), show_progress, true, false);
-        info!("Executing {} safe migration steps...", safe_count);
-
-        let mut applied = 0;
-        for (i, step) in rendered.iter().enumerate() {
-            if step.safety == Safety::Safe {
-                applied += 1;
-                info!("Applying safe step {}/{}...", applied, safe_count);
-                debug!("{}", style(&step.sql).dim());
-                executor.execute_step(&step.sql, step.safety, i + 1).await?;
-            }
-        }
+        let safe = retain_statements(sections, |s| s.safety == Safety::Safe);
+        run_sections(&safe, dev_pool).await?;
 
         info!("Safe operations completed successfully");
 
@@ -104,4 +82,14 @@ pub async fn apply_safe_rendered_steps(
     } else {
         Ok(ApplyOutcome::Applied)
     }
+}
+
+/// Run `sections` on the dev database, logging progress after each round trip.
+pub async fn run_sections(sections: &[RenderedSection], dev_pool: &PgPool) -> Result<()> {
+    let total: usize = sections.iter().map(|s| s.statements.len()).sum();
+    info!("Executing {} migration steps...", total);
+    execute_sections(dev_pool, sections, |done| {
+        info!("Applied {}/{} steps", done, total)
+    })
+    .await
 }

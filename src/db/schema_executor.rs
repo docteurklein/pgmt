@@ -2,7 +2,6 @@ use anyhow::{Result, anyhow};
 use sqlx::PgPool;
 
 use crate::db::error_context::SqlErrorContext;
-use crate::render::Safety;
 use crate::schema_loader::SchemaFile;
 
 /// Unified SQL content executor that consolidates SQL execution with enhanced error reporting
@@ -16,14 +15,10 @@ pub struct SqlContentExecutor {
 pub struct SqlExecutorConfig {
     /// Level of error formatting detail
     pub error_level: ErrorLevel,
-    /// Style of progress reporting
-    pub progress_style: ProgressStyle,
     /// Characters to show before truncating content in error messages
     pub content_truncation: usize,
     /// Type of source context for error messages
     pub source_context: SourceContextStyle,
-    /// Whether to show safety indicators for apply operations
-    pub safety_indicators: bool,
     /// Whether to continue on certain types of errors (reserved for future implementation)
     #[allow(dead_code)]
     pub continue_on_error: bool,
@@ -33,14 +28,6 @@ pub struct SqlExecutorConfig {
 pub enum ErrorLevel {
     Enhanced, // Include line numbers, better formatting
     WithTips, // Include troubleshooting tips and suggestions
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ProgressStyle {
-    None,      // No progress indicators
-    FileCount, // Show file x/y progress
-    StepCount, // Show step x/y progress
-    Detailed,  // Verbose progress with content preview
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -55,10 +42,8 @@ impl Default for SqlExecutorConfig {
     fn default() -> Self {
         Self {
             error_level: ErrorLevel::Enhanced,
-            progress_style: ProgressStyle::FileCount,
             content_truncation: 300,
             source_context: SourceContextStyle::File,
-            safety_indicators: false,
             continue_on_error: false,
         }
     }
@@ -80,6 +65,23 @@ pub struct SqlExecutionError {
 }
 
 impl SqlExecutionError {
+    /// Describe `error`, raised running `sql` from `source`.
+    pub fn from_sqlx_error(error: &sqlx::Error, sql: &str, source: &str) -> Self {
+        let ctx = SqlErrorContext::from_sqlx_error(error, sql);
+        Self {
+            source_context: source.to_string(),
+            sql_content: sql.to_string(),
+            line_number: ctx.line_number,
+            postgres_error: ctx.message,
+            pg_detail: ctx.detail,
+            pg_hint: ctx.hint,
+            pg_context: ctx.context,
+            suggestion: SqlContentExecutor::generate_suggestion(error),
+            troubleshooting_tips: SqlContentExecutor::generate_troubleshooting_tips(error),
+            dependencies_info: None,
+        }
+    }
+
     pub fn format_error(
         &self,
         error_level: &ErrorLevel,
@@ -241,11 +243,6 @@ impl SqlContentExecutor {
         Self { pool, config }
     }
 
-    /// Core unified method - executes SQL content with enhanced error handling
-    pub async fn execute_content(&self, content: &str, source: &str) -> Result<()> {
-        self.execute_content_with_deps(content, source, None).await
-    }
-
     /// Execute SQL content with optional dependency context
     pub async fn execute_content_with_deps(
         &self,
@@ -266,20 +263,9 @@ impl SqlContentExecutor {
         {
             Ok(_) => Ok(()),
             Err(sqlx_error) => {
-                // Use shared utility to extract rich error context from PostgreSQL
-                let ctx = SqlErrorContext::from_sqlx_error(&sqlx_error, content);
-
                 let error_info = SqlExecutionError {
-                    source_context: source.to_string(),
-                    sql_content: content.to_string(),
-                    line_number: ctx.line_number,
-                    postgres_error: ctx.message,
-                    pg_detail: ctx.detail,
-                    pg_hint: ctx.hint,
-                    pg_context: ctx.context,
-                    suggestion: Self::generate_suggestion(&sqlx_error),
-                    troubleshooting_tips: Self::generate_troubleshooting_tips(&sqlx_error),
                     dependencies_info: deps_info,
+                    ..SqlExecutionError::from_sqlx_error(&sqlx_error, content, source)
                 };
 
                 let formatted_error = error_info.format_error(
@@ -301,41 +287,6 @@ impl SqlContentExecutor {
         };
 
         self.execute_content_with_deps(&file.content, &file.relative_path, deps_info)
-            .await
-    }
-
-    /// Execute a migration step with safety indicators and step context
-    pub async fn execute_step(
-        &self,
-        step_sql: &str,
-        safety: Safety,
-        step_num: usize,
-    ) -> Result<()> {
-        // Show progress indicator if configured
-        if matches!(
-            self.config.progress_style,
-            ProgressStyle::StepCount | ProgressStyle::Detailed
-        ) {
-            let step_prefix = match safety {
-                Safety::Safe => "✅",
-                Safety::Destructive => "⚠️",
-            };
-
-            if self.config.safety_indicators {
-                println!(
-                    "{} Executing step {}: {:?} operation",
-                    step_prefix, step_num, safety
-                );
-            } else {
-                println!("Executing step {}", step_num);
-            }
-
-            if matches!(self.config.progress_style, ProgressStyle::Detailed) {
-                println!("{}", step_sql);
-            }
-        }
-
-        self.execute_content(step_sql, &format!("step {}", step_num))
             .await
     }
 }
@@ -447,10 +398,8 @@ impl SchemaFileExecutor {
     pub fn new(pool: PgPool) -> Self {
         let config = SqlExecutorConfig {
             error_level: ErrorLevel::WithTips,
-            progress_style: ProgressStyle::None,
             content_truncation: 400,
             source_context: SourceContextStyle::File,
-            safety_indicators: false,
             continue_on_error: false,
         };
 
@@ -462,46 +411,6 @@ impl SchemaFileExecutor {
     /// Execute a single schema file
     pub async fn execute_schema_file(&self, file: &SchemaFile) -> Result<()> {
         self.inner.execute_schema_file(file).await
-    }
-}
-
-/// Specialized executor for migration steps with safety indicators
-pub struct ApplyStepExecutor {
-    inner: SqlContentExecutor,
-}
-
-impl ApplyStepExecutor {
-    pub fn new(pool: PgPool, verbose: bool, show_safety: bool, dry_run: bool) -> Self {
-        let config = SqlExecutorConfig {
-            error_level: ErrorLevel::Enhanced,
-            progress_style: if verbose {
-                if dry_run {
-                    ProgressStyle::Detailed
-                } else {
-                    ProgressStyle::StepCount
-                }
-            } else {
-                ProgressStyle::None
-            },
-            content_truncation: 250,
-            source_context: SourceContextStyle::Step,
-            safety_indicators: show_safety,
-            continue_on_error: false,
-        };
-
-        Self {
-            inner: SqlContentExecutor::new(pool, config),
-        }
-    }
-
-    /// Execute a migration step with safety indicators
-    pub async fn execute_step(
-        &self,
-        step_sql: &str,
-        safety: Safety,
-        step_num: usize,
-    ) -> Result<()> {
-        self.inner.execute_step(step_sql, safety, step_num).await
     }
 }
 

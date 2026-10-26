@@ -1,6 +1,7 @@
 use crate::helpers::harness::{PgTestInstance, TestDatabase};
 use anyhow::Result;
 use pgmt::catalog::Catalog;
+use pgmt::db::plan_executor::{execute_sections, render_sections};
 use pgmt::diff::operations::{MigrationStep, SqlRenderer};
 use pgmt::diff::plan;
 use pgmt::modules::sectionize_unmoduled;
@@ -75,7 +76,7 @@ impl MigrationTestHelper {
     /// 1. Setup initial and target databases with provided SQL
     /// 2. Load catalogs, settling the target as the CLI settles its desired state
     /// 3. Run migration pipeline
-    /// 4. Apply migration to fresh database, one batch per section
+    /// 4. Apply migration to fresh database, one transaction per section
     /// 5. Verify final state matches target: re-planning yields nothing
     /// 6. Return migration steps for additional assertions
     pub async fn run_migration_test<F>(
@@ -135,18 +136,10 @@ impl MigrationTestHelper {
         for sql in initial_only_sql {
             fresh_db.execute(sql).await;
         }
-        // One batch per section, as `migrate apply` runs a section: a
-        // transactional section is one implicit transaction, so a statement
-        // that needs an earlier one committed fails here as it would there.
-        for section in &sections {
-            let sql: Vec<String> = section
-                .steps
-                .iter()
-                .flat_map(|step| step.to_sql())
-                .map(|rendered| rendered.sql)
-                .collect();
-            fresh_db.execute(&sql.join("\n")).await;
-        }
+        // Each section in one transaction, as `pgmt apply` and `migrate apply`
+        // run it, so a statement that needs an earlier one committed fails
+        // here as it would there.
+        execute_sections(fresh_db.pool(), &render_sections(&sections), |_| {}).await?;
 
         // Verify final state
         let final_catalog = Catalog::load_unfiltered(fresh_db.pool()).await?;
