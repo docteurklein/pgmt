@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::ViewOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for ViewOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -37,11 +37,13 @@ impl SqlRenderer for ViewOperation {
                         definition.trim_end_matches(';'),
                     ),
                     safety: Safety::Safe,
+                    tx: TxRequirement::Transactional,
                 }]
             }
             ViewOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!("DROP VIEW {}.{};", quote_ident(schema), quote_ident(name)),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             ViewOperation::Replace {
                 schema,
@@ -73,6 +75,7 @@ impl SqlRenderer for ViewOperation {
                         definition.trim_end_matches(';'),
                     ),
                     safety: Safety::Safe,
+                    tx: TxRequirement::Transactional,
                 }]
             }
             ViewOperation::SetOption {
@@ -99,6 +102,7 @@ impl SqlRenderer for ViewOperation {
                 vec![RenderedSql {
                     sql,
                     safety: Safety::Safe,
+                    tx: TxRequirement::Transactional,
                 }]
             }
         }

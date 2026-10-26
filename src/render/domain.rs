@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::DomainOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for DomainOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -19,10 +19,12 @@ impl SqlRenderer for DomainOperation {
                     definition
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!("DROP DOMAIN {}.{};", quote_ident(schema), quote_ident(name)),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::AlterSetNotNull { schema, name } => vec![RenderedSql {
                 sql: format!(
@@ -31,6 +33,7 @@ impl SqlRenderer for DomainOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::AlterDropNotNull { schema, name } => vec![RenderedSql {
                 sql: format!(
@@ -39,6 +42,7 @@ impl SqlRenderer for DomainOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::AlterSetDefault {
                 schema,
@@ -52,6 +56,7 @@ impl SqlRenderer for DomainOperation {
                     default
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::AlterDropDefault { schema, name } => vec![RenderedSql {
                 sql: format!(
@@ -60,6 +65,7 @@ impl SqlRenderer for DomainOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::AddConstraint {
                 schema,
@@ -75,6 +81,7 @@ impl SqlRenderer for DomainOperation {
                     expression
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             DomainOperation::DropConstraint {
                 schema,
@@ -88,6 +95,7 @@ impl SqlRenderer for DomainOperation {
                     quote_ident(constraint_name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
         }
     }

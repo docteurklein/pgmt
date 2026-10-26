@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::FunctionOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for FunctionOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -16,6 +16,7 @@ impl SqlRenderer for FunctionOperation {
                         format!("{};", definition.trim_end())
                     },
                     safety: Safety::Safe,
+                    tx: TxRequirement::Transactional,
                 }]
             }
             FunctionOperation::Replace { definition, .. } => {
@@ -27,6 +28,7 @@ impl SqlRenderer for FunctionOperation {
                         format!("{};", definition.trim_end())
                     },
                     safety: Safety::Safe,
+                    tx: TxRequirement::Transactional,
                 }]
             }
             FunctionOperation::Drop {
@@ -44,6 +46,7 @@ impl SqlRenderer for FunctionOperation {
                     parameter_types
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
         }
     }

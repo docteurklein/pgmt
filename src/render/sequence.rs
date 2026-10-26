@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::SequenceOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for SequenceOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -29,6 +29,7 @@ impl SqlRenderer for SequenceOperation {
                     if *cycle { " CYCLE" } else { " NO CYCLE" }
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             SequenceOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!(
@@ -37,6 +38,7 @@ impl SqlRenderer for SequenceOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Destructive,
+                tx: TxRequirement::Transactional,
             }],
             SequenceOperation::AlterOwnership {
                 schema,
@@ -70,6 +72,7 @@ impl SqlRenderer for SequenceOperation {
                     }
                 },
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
         }
     }

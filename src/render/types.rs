@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::TypeOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, escape_string, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, escape_string, quote_ident};
 
 impl SqlRenderer for TypeOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -41,10 +41,12 @@ impl SqlRenderer for TypeOperation {
                     ),
                 },
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             TypeOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!("DROP TYPE {}.{};", quote_ident(schema), quote_ident(name)),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             TypeOperation::AddValue {
                 schema,
@@ -63,6 +65,7 @@ impl SqlRenderer for TypeOperation {
                         .unwrap_or_default()
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::CommitBeforeDependents,
             }],
         }
     }
@@ -156,6 +159,7 @@ mod tests {
             "ALTER TYPE \"public\".\"status\" ADD VALUE 'archived';"
         );
         assert_eq!(rendered[0].safety, Safety::Safe);
+        assert_eq!(rendered[0].tx, TxRequirement::CommitBeforeDependents);
     }
 
     #[test]

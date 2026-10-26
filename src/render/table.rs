@@ -3,7 +3,7 @@
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::{ColumnAction, TableOperation};
 use crate::render::collation::collate_clause;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for TableOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -27,11 +27,13 @@ impl SqlRenderer for TableOperation {
                 vec![RenderedSql {
                     sql: crate::render::sql::render_create_table(&table),
                     safety: Safety::Safe,
+                    tx: TxRequirement::Transactional,
                 }]
             }
             TableOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!("DROP TABLE {}.{};", quote_ident(schema), quote_ident(name)),
                 safety: Safety::Destructive,
+                tx: TxRequirement::Transactional,
             }],
             TableOperation::Alter {
                 schema,
@@ -90,6 +92,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                     not_null_clause
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }
         }
         ColumnAction::Drop { name } => RenderedSql {
@@ -100,6 +103,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Destructive,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::SetNotNull { name } => RenderedSql {
             sql: format!(
@@ -109,6 +113,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::DropNotNull { name } => RenderedSql {
             sql: format!(
@@ -118,6 +123,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::SetDefault { name, default } => RenderedSql {
             sql: format!(
@@ -128,6 +134,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 default
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::DropDefault { name } => RenderedSql {
             sql: format!(
@@ -137,6 +144,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::DropGenerated { name } => RenderedSql {
             sql: format!(
@@ -146,6 +154,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Destructive,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::AddIdentity { name, kind } => RenderedSql {
             sql: format!(
@@ -156,6 +165,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 kind.as_sql()
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::SetIdentityKind { name, kind } => RenderedSql {
             sql: format!(
@@ -166,6 +176,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 kind.as_sql()
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         // Dropping identity discards the internal sequence (and its current
         // value), so surface it as destructive for review.
@@ -177,6 +188,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Destructive,
+            tx: TxRequirement::Transactional,
         },
         // Omitting COLLATE deliberately resets the column to its type's
         // default collation — PostgreSQL recomputes collation from the TYPE
@@ -195,6 +207,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 collate_clause(new_collation.as_ref())
             ),
             safety: Safety::Destructive,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::AddPrimaryKey { constraint } => {
             let pk_cols = constraint
@@ -213,6 +226,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                     pk_cols
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }
         }
         ColumnAction::DropPrimaryKey { name } => RenderedSql {
@@ -223,6 +237,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(name)
             ),
             safety: Safety::Destructive,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::EnableRls => RenderedSql {
             sql: format!(
@@ -231,6 +246,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(table)
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::DisableRls => RenderedSql {
             sql: format!(
@@ -241,6 +257,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
             // Disabling RLS is destructive because it removes security restrictions,
             // potentially exposing data that was previously protected by policies
             safety: Safety::Destructive,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::ForceRls => RenderedSql {
             sql: format!(
@@ -249,6 +266,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(table)
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
         ColumnAction::NoForceRls => RenderedSql {
             sql: format!(
@@ -257,6 +275,7 @@ fn render_column_action(action: &ColumnAction, schema: &str, table: &str) -> Ren
                 quote_ident(table)
             ),
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         },
     }
 }

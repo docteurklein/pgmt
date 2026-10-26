@@ -1,12 +1,12 @@
 //! Step-graph planning: turn diffed steps into an executable order.
 //!
 //! One path for everyone. Each step is annotated into a single [`PlannedStep`]
-//! graph — the step, its owning module (`None` = the unmoduled base), and its
-//! explicit dependency edges — and that graph is traversed once with module
-//! affinity ([`affinity_order`]) to produce the final execution order. A
-//! non-module project is the degenerate case: every step is base, module
-//! affinity has nothing to group, and the traversal reduces to a deterministic
-//! Kahn topological sort.
+//! graph — the step, its owning module (`None` = the unmoduled base), what it
+//! needs from its transaction, and its explicit dependency edges — and that
+//! graph is traversed once with section affinity ([`affinity_order`]) to
+//! produce the final execution order. A non-module plan with no transaction
+//! requirements is the degenerate case: nothing forces a section boundary, and
+//! the traversal reduces to a deterministic Kahn topological sort.
 //!
 //! The edges come from one derivation ([`collect_edges`]): catalog
 //! `forward_deps` (reversed for drops) with a step-declared fallback where the
@@ -22,15 +22,16 @@ use crate::catalog::id::DbObjectId;
 use crate::catalog::utils::is_system_schema;
 use crate::diff::operations::{MigrationStep, OperationKind};
 use crate::diff::{grants, namespace};
+use crate::render::TxRequirement;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 
 /// Coalesce column grants, annotate the steps into one graph, and traverse it
-/// with module affinity — THE ordering, shared by every caller.
+/// with section affinity — THE ordering, shared by every caller.
 ///
 /// `module_of` attributes each step to its owning module (`None` = the
 /// unmoduled base). A non-module plan passes an all-`None` closure, so affinity
-/// degenerates to a deterministic Kahn sort. Column-grant coalescing runs here
+/// groups by transaction requirements alone. Column-grant coalescing runs here
 /// (after diff + cascade expansion, before ordering) so it sees every producer
 /// of column-grant steps; see [`grants::coalesce_column_grants`].
 pub fn order_planned(
@@ -354,8 +355,70 @@ pub struct PlannedStep {
     pub step: MigrationStep,
     /// Owning module (`None` = the unmoduled base).
     pub module: Option<String>,
-    /// Indices of steps that must run before this one.
+    /// What the step needs from the transaction it runs in.
+    pub tx: TxRequirement,
+    /// The step can use objects its `deps` do not name (see
+    /// [`MigrationStep::has_untracked_dependencies`]).
+    pub untracked_deps: bool,
+    /// Indices of steps that must run before this one, in the same vec as
+    /// this step (re-pointed at the new positions once the vec is ordered).
     pub deps: Vec<usize>,
+}
+
+/// Where a section must end, decided one step at a time over a plan walked in
+/// execution order. A section is one module's steps run in one transaction (or
+/// one non-transactional step on its own), so a step forces a boundary when:
+///
+/// - it belongs to a different module than the open section,
+/// - it or the open section's step is `NonTransactional` (nothing can share
+///   its section, so it forces one even as the first step), or
+/// - it depends on a `CommitBeforeDependents` step in the open section, or
+///   has untracked dependencies while the open section holds one.
+///
+/// The traversal consults it to avoid forcing a boundary, and
+/// `modules::sectioning` cuts wherever it reports one, so the order and the
+/// cuts cannot disagree.
+#[derive(Debug, Default)]
+pub struct SectionBoundaries {
+    /// The open section's module and whether it is non-transactional; `None`
+    /// before the first step.
+    open: Option<(Option<String>, bool)>,
+    /// Steps in the open section whose dependents must wait for it to commit,
+    /// by the same indices the steps' `deps` use.
+    uncommitted: BTreeSet<usize>,
+}
+
+impl SectionBoundaries {
+    /// Whether emitting `step` next would force a section boundary.
+    pub fn forces_boundary(&self, step: &PlannedStep) -> bool {
+        match &self.open {
+            None => step.tx == TxRequirement::NonTransactional,
+            Some((module, non_transactional)) => {
+                *non_transactional
+                    || step.tx == TxRequirement::NonTransactional
+                    || *module != step.module
+                    || step.deps.iter().any(|d| self.uncommitted.contains(d))
+                    || (step.untracked_deps && !self.uncommitted.is_empty())
+            }
+        }
+    }
+
+    /// Emit `step`, known by `index`, and return whether it forced a section
+    /// boundary.
+    pub fn push(&mut self, index: usize, step: &PlannedStep) -> bool {
+        let forced = self.forces_boundary(step);
+        if forced {
+            self.uncommitted.clear();
+        }
+        self.open = Some((
+            step.module.clone(),
+            step.tx == TxRequirement::NonTransactional,
+        ));
+        if step.tx == TxRequirement::CommitBeforeDependents {
+            self.uncommitted.insert(index);
+        }
+        forced
+    }
 }
 
 /// Build the single annotated graph over `steps`.
@@ -434,6 +497,8 @@ pub fn annotate(
         .map(|(i, step)| {
             let module = module_of(&step)?;
             Ok(PlannedStep {
+                tx: step.tx_requirement(),
+                untracked_deps: step.has_untracked_dependencies(),
                 step,
                 module,
                 deps: deps[i].iter().copied().collect(),
@@ -442,11 +507,14 @@ pub fn annotate(
         .collect()
 }
 
-/// Order the annotated graph with module affinity: drain the current module's
-/// ready steps and jump to another module only when dependencies force it —
-/// so a module's steps stay contiguous whenever the graph allows, and
-/// interleaving (billing → core → billing) appears exactly when real
-/// cross-module coupling exists. Deterministic: ties break by original index.
+/// Order the annotated graph with section affinity: of the ready steps, emit
+/// one that continues the open section (see [`SectionBoundaries`]), and start a
+/// new section only when no ready step can continue it. So a module's steps
+/// stay contiguous whenever the graph allows, and interleaving (billing → core
+/// → billing) appears exactly when real cross-module coupling exists; a step
+/// that must wait for a commit runs after everything that can share the
+/// transaction; and a non-transactional step runs once nothing else can.
+/// Deterministic: ties break by original index.
 pub fn affinity_order(planned: Vec<PlannedStep>) -> anyhow::Result<Vec<PlannedStep>> {
     let n = planned.len();
     let mut indegree = vec![0usize; n];
@@ -460,16 +528,16 @@ pub fn affinity_order(planned: Vec<PlannedStep>) -> anyhow::Result<Vec<PlannedSt
 
     let mut ready: BTreeSet<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
     let mut order: Vec<usize> = Vec::with_capacity(n);
-    let mut current: Option<&Option<String>> = None;
+    let mut boundaries = SectionBoundaries::default();
 
-    // Prefer the module we're currently emitting; otherwise adopt the
-    // module of the earliest ready step.
-    while let Some(next) = current
-        .and_then(|m| ready.iter().copied().find(|&i| planned[i].module == *m))
+    while let Some(next) = ready
+        .iter()
+        .copied()
+        .find(|&i| !boundaries.forces_boundary(&planned[i]))
         .or_else(|| ready.iter().next().copied())
     {
         ready.remove(&next);
-        current = Some(&planned[next].module);
+        boundaries.push(next, &planned[next]);
         order.push(next);
         for &dep in &dependents[next] {
             indegree[dep] -= 1;
@@ -501,11 +569,22 @@ pub fn affinity_order(planned: Vec<PlannedStep>) -> anyhow::Result<Vec<PlannedSt
         );
     }
 
-    // Reorder by taking ownership (indices are a permutation).
+    // Reorder by taking ownership (indices are a permutation), re-pointing
+    // each step's deps at the new positions.
+    let mut position = vec![0usize; n];
+    for (new, &old) in order.iter().enumerate() {
+        position[old] = new;
+    }
     let mut slots: Vec<Option<PlannedStep>> = planned.into_iter().map(Some).collect();
     Ok(order
         .into_iter()
-        .map(|i| slots[i].take().expect("permutation"))
+        .map(|i| {
+            let mut node = slots[i].take().expect("permutation");
+            for dep in &mut node.deps {
+                *dep = position[*dep];
+            }
+            node
+        })
         .collect())
 }
 
@@ -524,6 +603,8 @@ mod tests {
         PlannedStep {
             step: schema_step(name),
             module: module.map(str::to_string),
+            tx: TxRequirement::Transactional,
+            untracked_deps: false,
             deps: deps.to_vec(),
         }
     }
@@ -582,6 +663,70 @@ mod tests {
         ];
         let ordered = affinity_order(planned).unwrap();
         assert_eq!(modules_of(&ordered), vec![None, None, Some("m")]);
+    }
+
+    fn with_tx(mut node: PlannedStep, tx: TxRequirement) -> PlannedStep {
+        node.tx = tx;
+        node
+    }
+
+    fn names_of(order: &[PlannedStep]) -> Vec<String> {
+        order
+            .iter()
+            .map(|n| match n.step.id() {
+                DbObjectId::Schema { name } => name,
+                other => panic!("expected a schema step, got {other}"),
+            })
+            .collect()
+    }
+
+    /// Steps that must wait for a commit run after everything that can share
+    /// the transaction, so two enums' new values commit together even when
+    /// a use of the first comes before the second in the input.
+    #[test]
+    fn test_affinity_defers_steps_waiting_for_a_commit() {
+        let planned = vec![
+            with_tx(
+                node("add_a", None, &[]),
+                TxRequirement::CommitBeforeDependents,
+            ),
+            node("use_a", None, &[0]),
+            with_tx(
+                node("add_b", None, &[]),
+                TxRequirement::CommitBeforeDependents,
+            ),
+            node("use_b", None, &[2]),
+            node("unrelated", None, &[]),
+        ];
+        let ordered = affinity_order(planned).unwrap();
+        assert_eq!(
+            names_of(&ordered),
+            ["add_a", "add_b", "unrelated", "use_a", "use_b"]
+        );
+    }
+
+    /// A non-transactional step waits until nothing else can continue the
+    /// open section.
+    #[test]
+    fn test_affinity_defers_non_transactional_steps() {
+        let planned = vec![
+            with_tx(
+                node("concurrent", None, &[]),
+                TxRequirement::NonTransactional,
+            ),
+            node("a", None, &[]),
+            node("b", None, &[1]),
+        ];
+        let ordered = affinity_order(planned).unwrap();
+        assert_eq!(names_of(&ordered), ["a", "b", "concurrent"]);
+    }
+
+    /// Ordered steps' deps name positions in the ordered vec.
+    #[test]
+    fn test_affinity_repoints_deps_at_ordered_positions() {
+        let planned = vec![node("late", None, &[1]), node("early", None, &[])];
+        let ordered = affinity_order(planned).unwrap();
+        assert_eq!(ordered[1].deps, vec![0]);
     }
 
     /// A cycle is reported, not silently dropped.

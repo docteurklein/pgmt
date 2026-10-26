@@ -3,9 +3,9 @@ title: Multi-Section Migrations
 description: Handle complex production migrations with sections for transaction control, retry logic, and progress tracking.
 ---
 
-Some migrations can't run in a single transaction. `CREATE INDEX CONCURRENTLY` can't be inside a transaction. Large data backfills shouldn't hold locks for minutes. Enum value additions require non-transactional execution.
+Some migrations can't run in a single transaction. `CREATE INDEX CONCURRENTLY` can't be inside a transaction. Large data backfills shouldn't hold locks for minutes. A new enum value can't be used until the transaction that added it commits.
 
-Sections let you handle these in a single migration file instead of splitting across multiple files.
+Sections let you handle these in a single migration file instead of splitting across multiple files. `pgmt migrate new` adds these sections itself when a generated migration needs a commit partway through, such as adding an enum value and then using it as a default.
 
 ## Why Sections?
 
@@ -83,7 +83,7 @@ ALTER TABLE users ADD COLUMN verified_at TIMESTAMP;
 
 Use for: schema changes, data modifications that must be atomic.
 
-Cannot use: `CREATE INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE`
+Cannot use: `CREATE INDEX CONCURRENTLY`, or a new enum value added earlier in the same section
 
 ### `non-transactional`
 
@@ -95,7 +95,7 @@ DROP INDEX CONCURRENTLY IF EXISTS idx_users_email;
 CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
 ```
 
-Use for: `CREATE INDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE`, long-running operations.
+Use for: `CREATE INDEX CONCURRENTLY`, long-running operations.
 
 :::caution
 A failed `CREATE INDEX CONCURRENTLY` leaves an **invalid index** behind. If pgmt retries, the retry will fail with "relation already exists". Always include `DROP INDEX CONCURRENTLY IF EXISTS` before `CREATE INDEX CONCURRENTLY` to ensure retries work correctly. If a section fails and an invalid index is present, pgmt detects it and includes the index name and this fix in the error message. Because a non-transactional section records one status for all its statements, pgmt warns when a single non-transactional section packs more than one `CONCURRENTLY` statement — keep one per section so a failure can resume precisely.
@@ -195,15 +195,17 @@ Why: Add nullable first (fast), backfill data, create index without blocking wri
 
 ### Enum Value Addition
 
-`ALTER TYPE ... ADD VALUE` cannot run in a transaction:
+`ALTER TYPE ... ADD VALUE` runs in a transaction, but the new value can't be used until that transaction commits ("unsafe use of new value"). Anything that uses it goes in a later section:
 
 ```sql
--- pgmt:section name="add_enum_value" mode="non-transactional" lock_timeout="2s" retry_attempts="5" retry_delay="3s" on_lock_timeout="retry"
-ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'moderator';
+-- pgmt:section name="add_enum_value" lock_timeout="2s" retry_attempts="5" retry_delay="3s" on_lock_timeout="retry"
+ALTER TYPE user_role ADD VALUE 'moderator';
 
 -- pgmt:section name="update_users" timeout="5m"
 UPDATE users SET role = 'moderator' WHERE is_moderator = true;
 ```
+
+`pgmt migrate new` splits generated migrations this way on its own.
 
 ## Validation
 

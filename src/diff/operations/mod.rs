@@ -4,7 +4,7 @@
 //! using hierarchical enums and trait-based rendering.
 
 use crate::catalog::id::DbObjectId;
-use crate::render::Safety;
+use crate::render::{Safety, TxRequirement};
 
 // Re-export SqlRenderer from render module
 pub use crate::render::SqlRenderer;
@@ -123,6 +123,39 @@ impl MigrationStep {
         self.to_sql()
             .iter()
             .any(|s| s.safety == Safety::Destructive)
+    }
+
+    /// What this step needs from the transaction it runs in: the most
+    /// restrictive requirement among its statements. A statement needing more
+    /// than `Transactional` is the only one its step renders, so a section
+    /// boundary always falls between steps.
+    pub fn tx_requirement(&self) -> TxRequirement {
+        let rendered = self.to_sql();
+        let requirement = rendered
+            .iter()
+            .map(|s| s.tx)
+            .max()
+            .unwrap_or(TxRequirement::Transactional);
+        debug_assert!(
+            requirement == TxRequirement::Transactional || rendered.len() == 1,
+            "{} renders a {:?} statement alongside others",
+            self.summary(),
+            requirement
+        );
+        requirement
+    }
+
+    /// Returns true if this step's SQL can reference objects that no
+    /// dependency edge records: a function body other than `BEGIN ATOMIC` is
+    /// opaque to `pg_depend`, yet a SQL-language body is parsed on create.
+    /// Placement assumes such a step uses whatever the plan has not committed.
+    pub fn has_untracked_dependencies(&self) -> bool {
+        matches!(
+            self,
+            MigrationStep::Function(
+                FunctionOperation::Create { .. } | FunctionOperation::Replace { .. }
+            )
+        )
     }
 
     /// Returns true if this step is a "relationship" step: one whose id it

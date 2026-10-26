@@ -10,19 +10,25 @@ use crate::catalog::Catalog;
 use crate::catalog::file_dependencies::FileToObjectMapping;
 use crate::catalog::id::DbObjectId;
 use crate::config::Config;
+use crate::migration::section_parser::TransactionMode;
 use anyhow::Result;
 use std::collections::BTreeMap;
 
-/// A contiguous run of same-module migration steps, ready to render as one
+/// A contiguous run of same-module migration steps that run in one
+/// transaction (or one non-transactional step), ready to render as one
 /// `-- pgmt:section` block.
 #[derive(Debug, Clone)]
 pub struct StepSection {
     /// Unique section name within the migration: the module name (or
     /// "default" for the base), with `_2`, `_3`, … suffixes when cross-module
-    /// dependencies force a module into multiple runs.
+    /// dependencies or transaction boundaries split a module into multiple
+    /// runs.
     pub name: String,
     /// Owning module (`None` = the base).
     pub module: Option<String>,
+    /// `NonTransactional` for a step that cannot run in a transaction block;
+    /// `Transactional` otherwise.
+    pub mode: TransactionMode,
     /// Prior owner of this section's objects (re-anchors and their paired
     /// acquisition migration sections): a single acquired-from
     /// module, `(unmoduled)` for the base. `None` for a plain
@@ -48,11 +54,11 @@ pub struct StepSection {
 /// comma-list attribute value.
 ///
 /// The cut runs over the topological order the module-cut already produced and
-/// starts a new section whenever the (module, provenance) pair changes, so each
-/// emitted section is a contiguous same-provenance run and dependency order is
-/// preserved. Section names are re-derived: a module's first
-/// section is the module name, later ones get `_2`, `_3`, … (`default*` for the
-/// base).
+/// starts a new section whenever the input section or the provenance changes,
+/// so each emitted section is a contiguous same-provenance run, dependency
+/// order is preserved, and no transaction boundary is lost. Section names are
+/// re-derived: a module's first section is the module name, later ones get
+/// `_2`, `_3`, … (`default*` for the base).
 ///
 /// Why: a remap section's objects are, by definition, already present on any
 /// target that holds its source, so the checksummed artifact itself tells
@@ -67,17 +73,21 @@ pub(crate) fn provenance_cut_baseline_sections(
     use crate::diff::operations::MigrationStep;
     use crate::diff::operations::SqlRenderer;
 
-    // A contiguous run of one module's steps sharing one provenance bucket.
+    // A contiguous run of one section's steps sharing one provenance bucket.
     struct Run {
+        section: usize,
         module: Option<String>,
+        mode: TransactionMode,
         /// The remap source (`Some(source_display)`), or `None` for a plain
         /// (retained/brand-new) run.
         remap: Option<String>,
         steps: Vec<MigrationStep>,
     }
 
+    // Runs only ever split a section: two sections of one module are separate
+    // transactions, and merging them would drop the commit between them.
     let mut runs: Vec<Run> = Vec::new();
-    for section in sections {
+    for (index, section) in sections.into_iter().enumerate() {
         let own = section.module.clone();
         for step in section.steps {
             let id = step.db_object_id();
@@ -91,9 +101,11 @@ pub(crate) fn provenance_cut_baseline_sections(
                 _ => None,
             };
             match runs.last_mut() {
-                Some(last) if last.module == own && last.remap == remap => last.steps.push(step),
+                Some(last) if last.section == index && last.remap == remap => last.steps.push(step),
                 _ => runs.push(Run {
+                    section: index,
                     module: own.clone(),
+                    mode: section.mode,
                     remap,
                     steps: vec![step],
                 }),
@@ -107,6 +119,7 @@ pub(crate) fn provenance_cut_baseline_sections(
         .map(|run| StepSection {
             name: String::new(),
             module: run.module,
+            mode: run.mode,
             remaps: run.remap,
             comment: None,
             steps: run.steps,
@@ -244,15 +257,25 @@ pub fn sectionize_unmoduled(
     Ok(cut_sections(ordered))
 }
 
-/// Cut an already-ordered plan into sections, starting a new one wherever the
-/// owning module changes. Never re-orders.
+/// Cut an already-ordered plan into sections wherever
+/// [`SectionBoundaries`](crate::diff::planning::SectionBoundaries) reports a
+/// boundary: a change of owning module, a non-transactional step, or a step
+/// that must wait for an earlier one to commit. Never re-orders.
 fn cut_sections(ordered: Vec<crate::diff::PlannedStep>) -> Vec<StepSection> {
+    use crate::render::TxRequirement;
+
+    let mut boundaries = crate::diff::planning::SectionBoundaries::default();
     let mut sections: Vec<StepSection> = Vec::new();
-    for node in ordered {
+    for (index, node) in ordered.into_iter().enumerate() {
+        let boundary = boundaries.push(index, &node);
         match sections.last_mut() {
-            Some(last) if last.module == node.module => last.steps.push(node.step),
+            Some(last) if !boundary => last.steps.push(node.step),
             _ => sections.push(StepSection {
                 name: String::new(),
+                mode: match node.tx {
+                    TxRequirement::NonTransactional => TransactionMode::NonTransactional,
+                    _ => TransactionMode::Transactional,
+                },
                 module: node.module,
                 remaps: None,
                 comment: None,
@@ -275,6 +298,9 @@ pub fn render_sectioned_migration(sections: &[StepSection]) -> String {
         let mut header = format!("-- pgmt:section name=\"{}\"", section.name);
         if let Some(module) = &section.module {
             header.push_str(&format!(" module=\"{}\"", module));
+        }
+        if section.mode != TransactionMode::Transactional {
+            header.push_str(&format!(" mode=\"{}\"", section.mode.as_str()));
         }
         if let Some(source) = &section.remaps {
             header.push_str(&format!(" remaps=\"{}\"", source));
@@ -408,6 +434,7 @@ pub(crate) fn acquisition_sections(provenance_cut_sections: &[StepSection]) -> V
             StepSection {
                 name: String::new(), // re-derived when merged into the migration
                 module: s.module.clone(),
+                mode: s.mode,
                 remaps: s.remaps.clone(),
                 // Line-oriented: each output line is its own single-line
                 // literal, joined with '\n'. A multi-line Rust literal here
@@ -578,6 +605,7 @@ mod tests {
         StepSection {
             name: module.unwrap_or("default").to_string(),
             module: module.map(str::to_string),
+            mode: TransactionMode::Transactional,
             remaps: None,
             comment: None,
             steps: objects
@@ -743,6 +771,69 @@ mod tests {
                 Some("c".to_string()),
                 Some("b".to_string())
             )
+        );
+    }
+
+    /// The provenance cut only splits: two sections of one module are two
+    /// transactions, and merging them would drop the commit between them.
+    #[test]
+    fn test_provenance_cut_keeps_same_module_sections_apart() {
+        let sections = vec![
+            step_section(Some("a"), &["x"]),
+            step_section(Some("a"), &["y"]),
+        ];
+        let out = provenance_cut_baseline_sections(sections, &historical(&[]));
+        assert_eq!(
+            out.iter().map(shape).collect::<Vec<_>>(),
+            vec![
+                ("a".to_string(), Some("a".to_string()), None),
+                ("a_2".to_string(), Some("a".to_string()), None),
+            ]
+        );
+    }
+
+    /// A step that must wait for a commit opens a new section of the same
+    /// module, and a non-transactional step gets a section of its own whose
+    /// header says so.
+    #[test]
+    fn test_cut_sections_at_transaction_boundaries() {
+        use crate::diff::PlannedStep;
+        use crate::diff::operations::{MigrationStep, SchemaOperation};
+        use crate::render::TxRequirement;
+
+        let node = |name: &str, tx: TxRequirement, deps: &[usize]| PlannedStep {
+            step: MigrationStep::Schema(SchemaOperation::Create {
+                name: name.to_string(),
+            }),
+            module: None,
+            tx,
+            untracked_deps: false,
+            deps: deps.to_vec(),
+        };
+        let sections = cut_sections(vec![
+            node("added", TxRequirement::CommitBeforeDependents, &[]),
+            node("unrelated", TxRequirement::Transactional, &[]),
+            node("uses_added", TxRequirement::Transactional, &[0]),
+            node("concurrent", TxRequirement::NonTransactional, &[]),
+            node("after", TxRequirement::Transactional, &[]),
+        ]);
+
+        let layout: Vec<(&str, TransactionMode, usize)> = sections
+            .iter()
+            .map(|s| (s.name.as_str(), s.mode, s.steps.len()))
+            .collect();
+        assert_eq!(
+            layout,
+            vec![
+                ("default", TransactionMode::Transactional, 2),
+                ("default_2", TransactionMode::Transactional, 1),
+                ("default_3", TransactionMode::NonTransactional, 1),
+                ("default_4", TransactionMode::Transactional, 1),
+            ]
+        );
+        assert!(
+            render_sectioned_migration(&sections)
+                .contains("-- pgmt:section name=\"default_3\" mode=\"non-transactional\"\n")
         );
     }
 }

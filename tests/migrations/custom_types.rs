@@ -1027,3 +1027,53 @@ async fn test_collation_change_cascades_composite_type_and_table() -> Result<()>
     target_db.cleanup().await;
     Ok(())
 }
+
+/// A new enum value is unusable until the transaction that added it commits,
+/// so every step that uses it must land in a later section than the
+/// `ADD VALUE`. The harness runs each section as one transaction, so a use
+/// that the plan does not order after the value fails with "unsafe use of new
+/// value".
+#[tokio::test]
+async fn test_uses_of_a_new_enum_value_run_after_it_commits() -> Result<()> {
+    let helper = MigrationTestHelper::new().await;
+
+    let schema = |value: &str| {
+        [
+            "CREATE TYPE mood AS ENUM ('ok', 'sad'".to_string()
+                + if value == "happy" { ", 'happy')" } else { ")" },
+            format!(
+                "CREATE TABLE people (
+                    name text,
+                    mood mood DEFAULT '{value}',
+                    CONSTRAINT not_that_mood CHECK (mood <> '{value}' OR name IS NOT NULL)
+                )"
+            ),
+            format!("CREATE INDEX people_in_mood ON people (name) WHERE mood = '{value}'"),
+            format!("CREATE VIEW moody_people AS SELECT name FROM people WHERE mood = '{value}'"),
+            format!(
+                "CREATE FUNCTION default_mood() RETURNS mood LANGUAGE sql AS $$ SELECT '{value}'::mood $$"
+            ),
+            format!(
+                "CREATE FUNCTION default_mood_label() RETURNS text LANGUAGE sql AS $$ SELECT '{value}'::mood::text $$"
+            ),
+        ]
+    };
+    let initial = schema("ok");
+    let target = schema("happy");
+    let initial: Vec<&str> = initial.iter().map(String::as_str).collect();
+    let target: Vec<&str> = target.iter().map(String::as_str).collect();
+
+    helper
+        .run_migration_test(&[], &initial, &target, |steps, _| {
+            assert!(
+                steps
+                    .iter()
+                    .any(|s| matches!(s, MigrationStep::Type(TypeOperation::AddValue { .. }))),
+                "expected an ADD VALUE step"
+            );
+            Ok(())
+        })
+        .await?;
+
+    Ok(())
+}

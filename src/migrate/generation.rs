@@ -1,6 +1,7 @@
 use crate::catalog::Catalog;
 use crate::diff::operations::{MigrationStep, SqlRenderer};
-use crate::diff::plan;
+use crate::migration::section_parser::TransactionMode;
+use crate::modules::{render_sectioned_migration, sectionize_unmoduled};
 use anyhow::Result;
 
 /// Input for migration generation - all pure data, no side effects
@@ -24,15 +25,25 @@ pub struct MigrationGenerationResult {
 
 /// Pure function to generate migration from two catalogs
 /// No side effects - just transformation of data
+///
+/// A plan that runs as one transaction renders header-less (the implicit
+/// `default` section); one that needs a commit or a non-transactional step
+/// partway through renders a `-- pgmt:section` per section.
 pub fn generate_migration(input: MigrationGenerationInput) -> Result<MigrationGenerationResult> {
-    let ordered_steps = plan(&input.old_catalog, &input.new_catalog)?;
+    let sections = sectionize_unmoduled(&input.old_catalog, &input.new_catalog)?;
+    let ordered_steps: Vec<MigrationStep> = sections
+        .iter()
+        .flat_map(|section| section.steps.iter().cloned())
+        .collect();
 
     let has_changes = !ordered_steps.is_empty();
 
-    let migration_sql = if has_changes {
-        render_migration_steps(&ordered_steps)?
-    } else {
-        "-- No changes detected\n".to_string()
+    let migration_sql = match sections.as_slice() {
+        [] => "-- No changes detected\n".to_string(),
+        [only] if only.mode == TransactionMode::Transactional => {
+            render_migration_steps(&only.steps)?
+        }
+        _ => render_sectioned_migration(&sections),
     };
 
     let migration_filename =

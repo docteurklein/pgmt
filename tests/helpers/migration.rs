@@ -3,6 +3,7 @@ use anyhow::Result;
 use pgmt::catalog::Catalog;
 use pgmt::diff::operations::{MigrationStep, SqlRenderer};
 use pgmt::diff::plan;
+use pgmt::modules::sectionize_unmoduled;
 use pgmt::schema_ops::settle;
 
 /// Assert that a database the plan was applied to needs no further migration:
@@ -74,7 +75,7 @@ impl MigrationTestHelper {
     /// 1. Setup initial and target databases with provided SQL
     /// 2. Load catalogs, settling the target as the CLI settles its desired state
     /// 3. Run migration pipeline
-    /// 4. Apply migration to fresh database
+    /// 4. Apply migration to fresh database, one batch per section
     /// 5. Verify final state matches target: re-planning yields nothing
     /// 6. Return migration steps for additional assertions
     pub async fn run_migration_test<F>(
@@ -119,10 +120,12 @@ impl MigrationTestHelper {
         .await?
         .catalog;
 
-        // Run migration pipeline
-        let steps = self
-            .run_migration_pipeline(&initial_catalog, &target_catalog)
-            .await?;
+        // Run migration pipeline, sectioned as a migration file would be
+        let sections = sectionize_unmoduled(&initial_catalog, &target_catalog)?;
+        let steps: Vec<MigrationStep> = sections
+            .iter()
+            .flat_map(|section| section.steps.iter().cloned())
+            .collect();
 
         // Apply migration to fresh database (starting from initial state)
         let fresh_db = self.pg.create_test_database().await;
@@ -132,7 +135,18 @@ impl MigrationTestHelper {
         for sql in initial_only_sql {
             fresh_db.execute(sql).await;
         }
-        self.execute_migration(&fresh_db, &steps).await?;
+        // One batch per section, as `migrate apply` runs a section: a
+        // transactional section is one implicit transaction, so a statement
+        // that needs an earlier one committed fails here as it would there.
+        for section in &sections {
+            let sql: Vec<String> = section
+                .steps
+                .iter()
+                .flat_map(|step| step.to_sql())
+                .map(|rendered| rendered.sql)
+                .collect();
+            fresh_db.execute(&sql.join("\n")).await;
+        }
 
         // Verify final state
         let final_catalog = Catalog::load_unfiltered(fresh_db.pool()).await?;

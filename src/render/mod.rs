@@ -33,9 +33,23 @@ pub enum Safety {
     Destructive,
 }
 
+/// What a statement needs from the transaction it runs in. Ordered from least
+/// to most restrictive, so a step's requirement is the max over its statements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TxRequirement {
+    /// Runs in a transaction alongside anything else.
+    Transactional,
+    /// Runs in a transaction, but statements that depend on it must run after
+    /// that transaction commits: a new enum value is unusable until then.
+    CommitBeforeDependents,
+    /// Cannot run inside a transaction block, so it runs alone.
+    NonTransactional,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderedSql {
     pub safety: Safety,
+    pub tx: TxRequirement,
     pub sql: String,
 }
 
@@ -44,6 +58,7 @@ impl RenderedSql {
         Self {
             sql,
             safety: Safety::Safe,
+            tx: TxRequirement::Transactional,
         }
     }
 }

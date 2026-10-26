@@ -1641,4 +1641,57 @@ COMMENT ON COLUMN users.email IS 'Email address for login';"#,
         })
         .await
     }
+
+    /// A new enum value can't be used until the transaction that added it
+    /// commits ("unsafe use of new value"). A migration that adds a value
+    /// and makes it a column default must commit between the two, or
+    /// `migrate apply` fails on the migration `migrate new` just generated.
+    #[tokio::test]
+    async fn test_migration_using_a_new_enum_value_applies() -> Result<()> {
+        with_cli_helper(async |helper| {
+            helper.init_project()?;
+
+            helper.write_schema_file(
+                "schema.sql",
+                "CREATE TYPE mood AS ENUM ('ok', 'sad');\n\
+                 CREATE TABLE people (mood mood DEFAULT 'ok');",
+            )?;
+            helper
+                .command()
+                .args(["migrate", "new", "initial"])
+                .assert()
+                .success();
+
+            crate::helpers::cli::next_version_tick();
+            helper.write_schema_file(
+                "schema.sql",
+                "CREATE TYPE mood AS ENUM ('ok', 'sad', 'happy');\n\
+                 CREATE TABLE people (mood mood DEFAULT 'happy');",
+            )?;
+            helper
+                .command()
+                .args(["migrate", "new", "add_happy"])
+                .assert()
+                .success();
+
+            helper
+                .command()
+                .args(["migrate", "apply", "--target-url", &helper.dev_database_url])
+                .assert()
+                .success();
+
+            let pool = helper.connect_to_dev_db().await?;
+            let default: String = sqlx::query_scalar(
+                "SELECT column_default FROM information_schema.columns \
+                 WHERE table_name = 'people' AND column_name = 'mood'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            pool.close().await;
+            assert_eq!(default, "'happy'::mood");
+
+            Ok(())
+        })
+        .await
+    }
 }

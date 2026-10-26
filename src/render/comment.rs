@@ -3,7 +3,7 @@
 use crate::catalog::id::DbObjectId;
 use crate::catalog::target::{AttrTarget, SubObject};
 use crate::diff::operations::CommentOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, escape_string, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, escape_string, quote_ident};
 
 /// Render a `COMMENT ON <keyword> <reference> IS …` statement (or `IS NULL` to
 /// drop the comment).
@@ -21,6 +21,7 @@ fn render_comment_sql(object_type: &str, identifier: &str, comment: Option<&str>
     RenderedSql {
         sql,
         safety: Safety::Safe,
+        tx: TxRequirement::Transactional,
     }
 }
 

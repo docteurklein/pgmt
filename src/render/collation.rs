@@ -3,7 +3,7 @@
 use crate::catalog::collation::{Collation, CollationProvider, CollationRef};
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::CollationOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, escape_string, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, escape_string, quote_ident};
 
 /// Render a ` COLLATE "schema"."name"` clause (leading space included), or an
 /// empty string when the column/attribute uses its type's default collation.
@@ -71,6 +71,7 @@ impl SqlRenderer for CollationOperation {
                     build_collation_options(collation)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             CollationOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!(
@@ -79,6 +80,7 @@ impl SqlRenderer for CollationOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
         }
     }

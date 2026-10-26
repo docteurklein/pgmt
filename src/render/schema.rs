@@ -2,7 +2,7 @@
 
 use crate::catalog::id::DbObjectId;
 use crate::diff::operations::SchemaOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for SchemaOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -13,10 +13,12 @@ impl SqlRenderer for SchemaOperation {
                 // and may also appear in managed schema files.
                 sql: format!("CREATE SCHEMA IF NOT EXISTS {};", quote_ident(name)),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             SchemaOperation::Drop { name } => vec![RenderedSql {
                 sql: format!("DROP SCHEMA {};", quote_ident(name)),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
         }
     }

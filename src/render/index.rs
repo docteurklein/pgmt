@@ -3,7 +3,7 @@
 use crate::catalog::id::DbObjectId;
 use crate::catalog::index::Index;
 use crate::diff::operations::IndexOperation;
-use crate::render::{RenderedSql, Safety, SqlRenderer, quote_ident};
+use crate::render::{RenderedSql, Safety, SqlRenderer, TxRequirement, quote_ident};
 
 impl SqlRenderer for IndexOperation {
     fn to_sql(&self) -> Vec<RenderedSql> {
@@ -12,6 +12,7 @@ impl SqlRenderer for IndexOperation {
             IndexOperation::Drop { schema, name } => vec![RenderedSql {
                 sql: format!("DROP INDEX {}.{};", quote_ident(schema), quote_ident(name)),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             IndexOperation::Cluster {
                 table_schema,
@@ -27,6 +28,7 @@ impl SqlRenderer for IndexOperation {
                     quote_ident(index_name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             IndexOperation::SetWithoutCluster { schema, name } => vec![RenderedSql {
                 sql: format!(
@@ -35,6 +37,7 @@ impl SqlRenderer for IndexOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Safe,
+                tx: TxRequirement::Transactional,
             }],
             IndexOperation::Reindex {
                 schema,
@@ -48,6 +51,11 @@ impl SqlRenderer for IndexOperation {
                     quote_ident(name)
                 ),
                 safety: Safety::Safe,
+                tx: if *concurrently {
+                    TxRequirement::NonTransactional
+                } else {
+                    TxRequirement::Transactional
+                },
             }],
         }
     }
@@ -292,6 +300,7 @@ mod tests {
             "REINDEX INDEX CONCURRENTLY \"public\".\"idx_users_email\";"
         );
         assert_eq!(rendered[0].safety, Safety::Safe);
+        assert_eq!(rendered[0].tx, TxRequirement::NonTransactional);
     }
 
     #[test]
