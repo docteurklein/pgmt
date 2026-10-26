@@ -605,3 +605,32 @@ async fn test_foreign_key_to_unique_key_created_from_scratch() -> Result<()> {
 
     Ok(())
 }
+
+/// Postgres requires parentheses around an exclusion constraint's `WHERE`
+/// predicate, and `pg_get_expr` returns the predicate without them.
+#[tokio::test]
+async fn test_exclusion_constraint_with_predicate_migration() -> Result<()> {
+    let helper = MigrationTestHelper::new().await;
+
+    helper
+        .run_migration_test(
+            &["CREATE TABLE bookings (room_id INT, status TEXT)"],
+            &[],
+            &["ALTER TABLE bookings ADD CONSTRAINT bookings_room_excl EXCLUDE USING btree (room_id WITH =) WHERE (status = 'confirmed')"],
+            |_, final_catalog| {
+                let constraint = final_catalog
+                    .constraints
+                    .iter()
+                    .find(|c| c.name == "bookings_room_excl")
+                    .expect("Exclusion constraint should be created");
+                assert!(matches!(
+                    &constraint.constraint_type,
+                    ConstraintType::Exclusion { predicate: Some(_), .. }
+                ));
+                Ok(())
+            },
+        )
+        .await?;
+
+    Ok(())
+}
