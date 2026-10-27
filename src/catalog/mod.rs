@@ -145,6 +145,11 @@ impl Catalog {
         sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             .execute(&mut *tx)
             .await?;
+        // The fetches join catalogs large enough to pass `jit_above_cost` on a
+        // big schema, and compiling them costs far more than it saves on a few
+        // thousand rows: with JIT on, a load of a 1,000-table schema spends
+        // about 40% of its time compiling.
+        sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
 
         // The cross-cutting state (namespace map, extension ownership,
         // comments) every converted kind resolves against. It must be fetched
