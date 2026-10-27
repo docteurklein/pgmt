@@ -16,31 +16,34 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "@astrojs/check": "^0.9.10",
-    "@astrojs/markdown-remark": "^7.3.1",
+    "@astrojs/check": "^0.9.12",
+    "@astrojs/markdown-remark": "^7.3.4",
     "@astrojs/sitemap": "^3.7.4",
-    "@astrojs/starlight": "^0.42.2",
-    "astro": "^7.3.3",
+    "@astrojs/starlight": "^0.42.7",
+    "astro": "^7.4.2",
     "rehype-mermaid": "^3.0.0",
-    "shiki": "^4.4.3",
+    "shiki": "^4.5.0",
     "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@pandacss/dev": "^1.12.1",
-    "@typescript-eslint/eslint-plugin": "^8.70.0",
-    "@typescript-eslint/parser": "^8.70.0",
-    "eslint": "^10.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
+    "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-astro": "^3.2.1",
-    "globals": "^17.12.0",
-    "playwright": "^1.63.0",
-    "prettier": "^3.9.8",
-    "prettier-plugin-astro": "^1.0.1"
+    "globals": "^17.13.0",
+    "playwright": "^1.64.1",
+    "prettier": "^3.9.10",
+    "prettier-plugin-astro": "^1.1.2"
   },
   "pnpm": {
     "overrides": {
-      "lodash": "^4.17.23"
+      "lodash": "^4.17.23",
+      "browserslist": "^4.28.7",
+      "postcss": "^8.5.23",
+      "postcss-selector-parser": "^7.1.6"
     }
   }
 }
