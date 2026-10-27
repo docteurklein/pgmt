@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `pgmt apply` sends its changes to the database 500 statements per round trip instead of one at a time, and runs each section of the plan as one transaction. Applying a 1,000-table schema to an empty database spent about 9.5 seconds sending statements and now spends under 3, and the saving is larger against a remote database, where each round trip costs more. A failed `pgmt apply` now rolls back the section it was running instead of leaving every statement before the failure applied, and the error still names the statement that failed.
 - Postgres no longer JIT-compiles the queries pgmt uses to read a database's schema. On a large schema they cost enough to trigger JIT, and compiling them took about 40% of each read; `pgmt apply` reads three per run. A no-op `pgmt apply` of a 1,000-table schema went from about 8.4 to 7.2 seconds.
+- `pgmt apply`, `pgmt diff`, and `pgmt migrate diff` read the dev or target database while the schema files are applied to the shadow database, instead of waiting for them to finish.
 
 ## 0.6.5 - 2026-09-22
 

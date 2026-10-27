@@ -46,16 +46,19 @@ pub async fn cmd_migrate_diff(
 ) -> Result<()> {
     eprintln!("Checking target database for drift...\n");
 
-    // Load schema into shadow database
-    eprintln!("Loading schema files...");
-    let schema_catalog = apply_current_schema_to_shadow(config, root_dir, shadow).await?;
-
-    // Load target database catalog
-    eprintln!("Loading target database...");
-    let target_pool =
-        crate::db::connection::connect_to_database(target.as_str(), "target database").await?;
+    // The target catalog does not depend on the shadow work, so the two load
+    // at the same time.
+    eprintln!("Loading schema files and target database...");
     let filter = ObjectFilter::from_config(config);
-    let target_catalog = Catalog::load_managed(&target_pool, &filter).await?;
+    let (schema_catalog, target_catalog) = tokio::try_join!(
+        apply_current_schema_to_shadow(config, root_dir, shadow),
+        async {
+            let target_pool =
+                crate::db::connection::connect_to_database(target.as_str(), "target database")
+                    .await?;
+            Catalog::load_managed(&target_pool, &filter).await
+        },
+    )?;
 
     // Compute differences (target -> schema, so SQL shows how to fix target)
     eprintln!("Computing differences...\n");

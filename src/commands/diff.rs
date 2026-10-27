@@ -44,16 +44,19 @@ pub async fn cmd_diff(
 ) -> Result<()> {
     eprintln!("Comparing schema files with dev database...\n");
 
-    // Load schema into shadow database
-    eprintln!("Loading schema files...");
-    let schema_catalog = apply_current_schema_to_shadow(config, root_dir, shadow).await?;
-
-    // Load dev database catalog
-    eprintln!("Loading dev database...");
-    let dev_pool =
-        crate::db::connection::connect_to_database(dev.as_str(), "development database").await?;
+    // The dev catalog does not depend on the shadow work, so the two load at
+    // the same time.
+    eprintln!("Loading schema files and dev database...");
     let filter = ObjectFilter::from_config(config);
-    let dev_catalog = Catalog::load_managed(&dev_pool, &filter).await?;
+    let (schema_catalog, dev_catalog) = tokio::try_join!(
+        apply_current_schema_to_shadow(config, root_dir, shadow),
+        async {
+            let dev_pool =
+                crate::db::connection::connect_to_database(dev.as_str(), "development database")
+                    .await?;
+            Catalog::load_managed(&dev_pool, &filter).await
+        },
+    )?;
 
     // Compute differences (dev -> schema, so SQL shows how to update dev)
     eprintln!("Computing differences...\n");
